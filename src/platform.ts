@@ -1,17 +1,16 @@
 import type { API, Characteristic, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig, Service } from 'homebridge';
 
-import { ExamplePlatformAccessory } from './platformAccessory.js';
+import { PuraPlatformAccessory } from './platformAccessory.js';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
-
-// This is only required when using Custom Services and Characteristics not support by HomeKit
-import { EveHomeKitTypes } from 'homebridge-lib/EveHomeKitTypes';
+import { PuraApi } from './puraApi.js';
+import { PuraDevice, PuraConfig } from './puraTypes.js';
 
 /**
- * HomebridgePlatform
- * This class is the main constructor for your plugin, this is where you should
- * parse the user config and discover/register accessories with Homebridge.
+ * PuraPlatform
+ * This class is the main constructor for the Pura plugin, this is where we
+ * authenticate with Pura and discover/register accessories with Homebridge.
  */
-export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
+export class PuraPlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service;
   public readonly Characteristic: typeof Characteristic;
 
@@ -19,11 +18,9 @@ export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
   public readonly accessories: Map<string, PlatformAccessory> = new Map();
   public readonly discoveredCacheUUIDs: string[] = [];
 
-  // This is only required when using Custom Services and Characteristics not support by HomeKit
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public readonly CustomServices: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public readonly CustomCharacteristics: any;
+  private readonly puraApi: PuraApi;
+  private readonly puraConfig: PuraConfig;
+  private refreshInterval: NodeJS.Timeout | null = null;
 
   constructor(
     public readonly log: Logging,
@@ -33,9 +30,14 @@ export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
     this.Service = api.hap.Service;
     this.Characteristic = api.hap.Characteristic;
 
-    // This is only required when using Custom Services and Characteristics not support by HomeKit
-    this.CustomServices = new EveHomeKitTypes(this.api).Services;
-    this.CustomCharacteristics = new EveHomeKitTypes(this.api).Characteristics;
+    // Validate configuration
+    if (!config.username || !config.password) {
+      this.log.error('Username and password are required in the config');
+      throw new Error('Username and password are required in the config');
+    }
+
+    this.puraConfig = config as PuraConfig;
+    this.puraApi = new PuraApi(this.log);
 
     this.log.debug('Finished initializing platform:', this.config.name);
 
@@ -47,6 +49,13 @@ export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
       log.debug('Executed didFinishLaunching callback');
       // run the method to discover / register your devices as accessories
       this.discoverDevices();
+    });
+
+    // Clean up on shutdown
+    this.api.on('shutdown', () => {
+      if (this.refreshInterval) {
+        clearInterval(this.refreshInterval);
+      }
     });
   }
 
@@ -62,89 +71,166 @@ export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
   }
 
   /**
-   * This is an example method showing how to register discovered accessories.
-   * Accessories must only be registered once, previously created accessories
-   * must not be registered again to prevent "duplicate UUID" errors.
+   * Discover and register Pura devices
    */
-  discoverDevices() {
-    // EXAMPLE ONLY
-    // A real plugin you would discover accessories from the local network, cloud services
-    // or a user-defined array in the platform config.
-    const exampleDevices = [
-      {
-        exampleUniqueId: 'ABCD',
-        exampleDisplayName: 'Bedroom',
-      },
-      {
-        exampleUniqueId: 'EFGH',
-        exampleDisplayName: 'Kitchen',
-      },
-      {
-        // This is an example of a device which uses a Custom Service
-        exampleUniqueId: 'IJKL',
-        exampleDisplayName: 'Backyard',
-        CustomService: 'AirPressureSensor',
-      },
-    ];
+  async discoverDevices() {
+    try {
+      // Authenticate with Pura
+      this.log.info('Authenticating with Pura...');
+      await this.puraApi.authenticate(this.puraConfig.username, this.puraConfig.password);
+      this.log.info('Pura authentication successful');
 
-    // loop over the discovered devices and register each one if it has not already been registered
-    for (const device of exampleDevices) {
-      // generate a unique id for the accessory this should be generated from
-      // something globally unique, but constant, for example, the device serial
-      // number or MAC address
-      const uuid = this.api.hap.uuid.generate(device.exampleUniqueId);
+      // Get devices
+      this.log.info('Discovering Pura devices...');
+      const devices = await this.puraApi.getDevices();
+      this.log.info(`Found ${devices.length} Pura device(s)`);
 
-      // see if an accessory with the same uuid has already been registered and restored from
-      // the cached devices we stored in the `configureAccessory` method above
-      const existingAccessory = this.accessories.get(uuid);
-
-      if (existingAccessory) {
-        // the accessory already exists
-        this.log.info('Restoring existing accessory from cache:', existingAccessory.displayName);
-
-        // if you need to update the accessory.context then you should run `api.updatePlatformAccessories`. e.g.:
-        // existingAccessory.context.device = device;
-        // this.api.updatePlatformAccessories([existingAccessory]);
-
-        // create the accessory handler for the restored accessory
-        // this is imported from `platformAccessory.ts`
-        new ExamplePlatformAccessory(this, existingAccessory);
-
-        // it is possible to remove platform accessories at any time using `api.unregisterPlatformAccessories`, e.g.:
-        // remove platform accessories when no longer present
-        // this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [existingAccessory]);
-        // this.log.info('Removing existing accessory from cache:', existingAccessory.displayName);
-      } else {
-        // the accessory does not yet exist, so we need to create it
-        this.log.info('Adding new accessory:', device.exampleDisplayName);
-
-        // create a new accessory
-        const accessory = new this.api.platformAccessory(device.exampleDisplayName, uuid);
-
-        // store a copy of the device object in the `accessory.context`
-        // the `context` property can be used to store any data about the accessory you may need
-        accessory.context.device = device;
-
-        // create the accessory handler for the newly create accessory
-        // this is imported from `platformAccessory.ts`
-        new ExamplePlatformAccessory(this, accessory);
-
-        // link the accessory to your platform
-        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+      // Register each device
+      for (const device of devices) {
+        await this.registerDevice(device);
       }
 
-      // push into discoveredCacheUUIDs
-      this.discoveredCacheUUIDs.push(uuid);
+      // Remove accessories that are no longer present
+      this.removeStaleAccessories();
+
+      // Set up refresh interval
+      this.setupRefreshInterval();
+
+    } catch (error) {
+      this.log.error('Failed to discover Pura devices:', error);
+    }
+  }
+
+  /**
+   * Register a Pura device as a HomeKit accessory
+   */
+  private async registerDevice(device: PuraDevice) {
+    this.log.debug('Registering device:', device.name, device.id);
+
+    // Create accessory for each bay that exists
+    if (device.bay1) {
+      await this.registerBayAccessory(device, 1);
+    }
+    if (device.bay2) {
+      await this.registerBayAccessory(device, 2);
+    }
+  }
+
+  /**
+   * Register a bay as a separate accessory
+   */
+  private async registerBayAccessory(device: PuraDevice, bayNumber: number) {
+    const bay = bayNumber === 1 ? device.bay1 : device.bay2;
+    if (!bay) {
+      return;
     }
 
-    // you can also deal with accessories from the cache which are no longer present by removing them from Homebridge
-    // for example, if your plugin logs into a cloud account to retrieve a device list, and a user has previously removed a device
-    // from this cloud account, then this device will no longer be present in the device list but will still be in the Homebridge cache
+    const accessoryName = `${device.name} Bay ${bayNumber}`;
+    const uniqueId = `${device.id}-bay${bayNumber}`;
+    const uuid = this.api.hap.uuid.generate(uniqueId);
+
+    // Check if accessory already exists
+    const existingAccessory = this.accessories.get(uuid);
+
+    if (existingAccessory) {
+      // Update existing accessory
+      this.log.info('Restoring existing accessory from cache:', existingAccessory.displayName);
+      existingAccessory.context.device = device;
+      existingAccessory.context.bayNumber = bayNumber;
+      this.api.updatePlatformAccessories([existingAccessory]);
+
+      // Create the accessory handler
+      new PuraPlatformAccessory(this, existingAccessory, this.puraApi);
+    } else {
+      // Create new accessory
+      this.log.info('Adding new accessory:', accessoryName);
+      const accessory = new this.api.platformAccessory(accessoryName, uuid);
+
+      // Store device info in context
+      accessory.context.device = device;
+      accessory.context.bayNumber = bayNumber;
+
+      // Create the accessory handler
+      new PuraPlatformAccessory(this, accessory, this.puraApi);
+
+      // Register the accessory
+      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+    }
+
+    // Track this UUID as discovered
+    this.discoveredCacheUUIDs.push(uuid);
+  }
+
+  /**
+   * Remove accessories that are no longer present
+   */
+  private removeStaleAccessories() {
     for (const [uuid, accessory] of this.accessories) {
       if (!this.discoveredCacheUUIDs.includes(uuid)) {
         this.log.info('Removing existing accessory from cache:', accessory.displayName);
         this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
       }
+    }
+  }
+
+  /**
+   * Set up periodic refresh of device status
+   */
+  private setupRefreshInterval() {
+    const interval = (this.puraConfig.refreshInterval || 300) * 1000; // Convert to milliseconds
+    this.log.debug(`Setting up refresh interval: ${interval / 1000} seconds`);
+
+    this.refreshInterval = setInterval(async () => {
+      try {
+        this.log.debug('Refreshing device status...');
+        await this.refreshDeviceStatus();
+      } catch (error) {
+        this.log.error('Failed to refresh device status:', error);
+      }
+    }, interval);
+  }
+
+  /**
+   * Refresh status of all devices
+   */
+  private async refreshDeviceStatus() {
+    try {
+      const devices = await this.puraApi.getDevices();
+      
+      for (const device of devices) {
+        // Update accessories for each bay
+        if (device.bay1) {
+          await this.updateBayAccessory(device, 1);
+        }
+        if (device.bay2) {
+          await this.updateBayAccessory(device, 2);
+        }
+      }
+    } catch (error) {
+      this.log.debug('Device status refresh failed:', error);
+      // Try to refresh tokens if authentication failed
+      if (error instanceof Error && error.message.includes('authentication')) {
+        try {
+          await this.puraApi.refreshToken();
+          this.log.debug('Token refresh successful');
+        } catch (refreshError) {
+          this.log.error('Token refresh failed:', refreshError);
+        }
+      }
+    }
+  }
+
+  /**
+   * Update a bay accessory with fresh device data
+   */
+  private async updateBayAccessory(device: PuraDevice, bayNumber: number) {
+    const uniqueId = `${device.id}-bay${bayNumber}`;
+    const uuid = this.api.hap.uuid.generate(uniqueId);
+    const accessory = this.accessories.get(uuid);
+
+    if (accessory) {
+      accessory.context.device = device;
+      this.api.updatePlatformAccessories([accessory]);
     }
   }
 }
