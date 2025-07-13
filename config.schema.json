@@ -1,5 +1,5 @@
 {
-  "pluginAlias": "ExampleHomebridgePlugin",
+  "pluginAlias": "PuraFragranceDiffuser",
   "pluginType": "platform",
   "singular": true,
   "strictValidation": false,
@@ -10,7 +10,27 @@
         "title": "Name",
         "type": "string",
         "required": true,
-        "default": "Example Dynamic Platform"
+        "default": "Pura Fragrance Diffuser"
+      },
+      "username": {
+        "title": "Username",
+        "type": "string",
+        "required": true,
+        "description": "Your Pura app username (email address)"
+      },
+      "password": {
+        "title": "Password",
+        "type": "string",
+        "required": true,
+        "description": "Your Pura app password"
+      },
+      "refreshInterval": {
+        "title": "Refresh Interval (seconds)",
+        "type": "number",
+        "minimum": 30,
+        "maximum": 3600,
+        "default": 300,
+        "description": "How often to refresh device status (30-3600 seconds)"
       }
     }
   }

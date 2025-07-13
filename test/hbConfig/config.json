@@ -1,13 +1,13 @@
 {
   "bridge": {
-    "name": "PluginTemplate",
+    "name": "PuraPlugin",
     "username": "AA:BB:CC:DD:EE:FF",
     "port": 51826,
     "pin": "031-45-154"
   },
-  "description": "HomeBridge HTTP Status Control",
+  "description": "HomeBridge Pura Fragrance Diffuser Control",
   "plugins": [
-    "homebridge-plugin-name",
+    "homebridge-pura",
     "homebridge-config-ui-x"
   ],
   "platforms": [
@@ -23,8 +23,11 @@
       "debug": false
     },
     {
-      "name": "homebridge-plugin-name",
-      "platform": "ExampleHomebridgePlugin"
+      "name": "Pura Fragrance Diffuser",
+      "platform": "PuraFragranceDiffuser",
+      "username": "your-email@example.com",
+      "password": "your-password",
+      "refreshInterval": 300
     }
   ],
   "accessories": []

@@ -1,22 +1,25 @@
 {
-  "name": "homebridge-plugin-name",
-  "displayName": "Plugin Name",
+  "name": "homebridge-pura",
+  "displayName": "Pura Smart Fragrance Diffuser",
   "type": "module",
   "version": "1.0.0",
-  "private": true,
-  "description": "A short description about what your plugin does.",
-  "author": "Your Name",
+  "description": "Homebridge plugin for Pura smart fragrance diffusers",
+  "author": "pradeepmouli",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/USERNAME/GITHUB_PROJECT_NAME#readme",
+  "homepage": "https://github.com/pradeepmouli/homebridge-pura#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/USERNAME/GITHUB_PROJECT_NAME.git"
+    "url": "https://github.com/pradeepmouli/homebridge-pura.git"
   },
   "bugs": {
-    "url": "https://github.com/USERNAME/GITHUB_PROJECT_NAME/issues"
+    "url": "https://github.com/pradeepmouli/homebridge-pura/issues"
   },
   "keywords": [
-    "homebridge-plugin"
+    "homebridge-plugin",
+    "pura",
+    "fragrance",
+    "diffuser",
+    "smart-home"
   ],
   "main": "dist/index.js",
   "engines": {
@@ -30,7 +33,9 @@
     "watch": "npm run build && npm link && nodemon"
   },
   "dependencies": {
-    "homebridge-lib": "^7.1.4"
+    "homebridge-lib": "^7.1.4",
+    "node-fetch": "^3.3.2",
+    "amazon-cognito-identity-js": "^6.3.12"
   },
   "devDependencies": {
     "@eslint/js": "^9.21.0",
