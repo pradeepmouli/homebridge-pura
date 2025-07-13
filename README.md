@@ -91,6 +91,28 @@ If the plugin loses connection:
 
 For issues and feature requests, please use the [GitHub Issues](https://github.com/pradeepmouli/homebridge-pura/issues) page.
 
+## Development
+
+### Release Process
+
+This project uses automated releases via GitHub Actions. To create a new release:
+
+1. Update the version in `package.json`
+2. Commit your changes: `git commit -am "Release v1.x.x"`
+3. Create and push a version tag: `git tag v1.x.x && git push origin v1.x.x`
+
+The GitHub Actions workflow will automatically:
+- Build and test the code
+- Create a GitHub release
+- Publish the package to npm
+
+**Note**: Make sure the version in `package.json` matches the tag version (without the 'v' prefix). The workflow will verify this and fail if they don't match.
+
+### Prerequisites for Publishing
+
+To publish releases, repository maintainers need to configure:
+- `NPM_TOKEN`: A valid npm authentication token with publish permissions
+
 ## Credits
 
 This plugin is inspired by and based on the [pypura](https://github.com/natekspencer/pypura) Python library by @natekspencer.
