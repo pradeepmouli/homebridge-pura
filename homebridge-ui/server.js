@@ -1,13 +1,26 @@
 import { AuthenticationDetails, CognitoUser, CognitoUserPool } from 'amazon-cognito-identity-js';
 import { HomebridgePluginUiServer, RequestError } from '@homebridge/plugin-ui-utils';
 
-const DEFAULT_USER_POOL_ID = 'us-east-1_LaB718hYv';
-const DEFAULT_CLIENT_ID = '4iekubat0jb5iljfbaalsiqf9j';
+import { DEFAULT_USER_POOL_ID, DEFAULT_CLIENT_ID } from '../dist/authConfig.js';
+import { PuraOAuthSession } from '../dist/oauth.js';
 
 class UiServer extends HomebridgePluginUiServer {
   constructor() {
     super();
 
+    const oauth = new PuraOAuthSession(this.homebridgeStoragePath);
+    this.onRequest('/oauth/start', () => oauth.start());
+    this.onRequest('/oauth/status', () => oauth.status());
+    this.onRequest('/oauth/complete', async payload => {
+      if (typeof payload?.callbackUrl !== 'string' || payload.callbackUrl.length > 16384) {
+        throw new RequestError('Paste the complete Pura callback URL.');
+      }
+      try {
+        return await oauth.complete(payload.callbackUrl);
+      } catch (error) {
+        throw new RequestError(error.message);
+      }
+    });
     this.onRequest('/test-credentials', this.handleTestCredentials.bind(this));
 
     this.ready();

@@ -9,13 +9,16 @@ import {
   CognitoUser, 
   AuthenticationDetails,
   CognitoUserSession,
+  CognitoIdToken,
+  CognitoAccessToken,
+  CognitoRefreshToken,
 } from 'amazon-cognito-identity-js';
 import fetch, { RequestInit } from 'node-fetch';
 import { PuraBay, PuraDevice, PuraAuthTokens, PuraNightlight, PuraTimer, PuraFragrance } from './puraTypes.js';
 
-// Defaults from pypura
-const DEFAULT_USER_POOL_ID = 'us-east-1_LaB718hYv'; // Base64 decoded from pypura
-const DEFAULT_CLIENT_ID = '4iekubat0jb5iljfbaalsiqf9j'; // Base64 decoded from pypura
+import { DEFAULT_USER_POOL_ID, DEFAULT_CLIENT_ID } from './authConfig.js';
+import type { PuraOAuthSession } from './oauth.js';
+
 const DEFAULT_BASE_URL = 'https://trypura.io/mobile/api/';
 
 export function mapPuraNumericIntensityToHomeKit(intensity: unknown): 20 | 40 | 60 | 80 | 100 | null {
@@ -83,6 +86,7 @@ export class PuraApi {
   private userPool: CognitoUserPool;
   private cognitoUser: CognitoUser | null = null;
   private session: CognitoUserSession | null = null;
+  private oauthSession: PuraOAuthSession | undefined;
   private refreshInFlight: Promise<PuraAuthTokens> | null = null;
   private readonly log: Logging;
   private readonly baseUrl: string;
@@ -129,6 +133,7 @@ export class PuraApi {
    * Authenticate with Pura API
    */
   async authenticate(username: string, password: string): Promise<PuraAuthTokens> {
+    this.oauthSession = undefined;
     return new Promise((resolve, reject) => {
       const authenticationDetails = new AuthenticationDetails({
         Username: username,
@@ -161,7 +166,27 @@ export class PuraApi {
   /**
    * Refresh authentication tokens
    */
+  async authenticateOAuth(oauth: PuraOAuthSession): Promise<PuraAuthTokens> {
+    const tokens = await oauth.current();
+    this.oauthSession = oauth;
+    this.installOAuthTokens(tokens);
+    return tokens;
+  }
+
+  private installOAuthTokens(tokens: PuraAuthTokens): void {
+    this.session = new CognitoUserSession({
+      IdToken: new CognitoIdToken({ IdToken: tokens.idToken }),
+      AccessToken: new CognitoAccessToken({ AccessToken: tokens.accessToken }),
+      RefreshToken: new CognitoRefreshToken({ RefreshToken: tokens.refreshToken }),
+    });
+  }
+
   async refreshToken(): Promise<PuraAuthTokens> {
+    if (this.oauthSession) {
+      const tokens = await this.oauthSession.refresh();
+      this.installOAuthTokens(tokens);
+      return tokens;
+    }
     if (!this.cognitoUser || !this.session) {
       throw new Error('Not authenticated');
     }

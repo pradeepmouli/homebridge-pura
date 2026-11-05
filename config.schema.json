@@ -15,9 +15,7 @@
   "schema": {
     "type": "object",
     "required": [
-      "name",
-      "username",
-      "password"
+      "name"
     ],
     "properties": {
       "name": {
@@ -45,7 +43,7 @@
         "title": "Enable Intensity Control",
         "type": "boolean",
         "default": false,
-        "description": "Because “on” and “off” aren’t enough choices. Replaces the on/off switch with a fan control for choosing Subtle, Medium, or Strong intensity. On multi-bay diffusers, intensity changes apply across available bays to keep auto-alternate working as expected."
+        "description": "Because \u201con\u201d and \u201coff\u201d aren\u2019t enough choices. Replaces the on/off switch with a fan control for choosing Subtle, Medium, or Strong intensity. On multi-bay diffusers, intensity changes apply across available bays to keep auto-alternate working as expected."
       },
       "enableBayControl": {
         "title": "Enable Per-Bay Controls",
@@ -63,9 +61,40 @@
         "title": "Enable Auto-Alternate Control",
         "type": "boolean",
         "default": false,
-        "description": "Can’t pick a favorite? Let Pura play referee. Adds a HomeKit switch for Pura’s Auto-Alternate setting on multi-bay diffusers. When on, Pura rotates between fragrance bays over time; when off, it sticks with the bay you choose. Either way, only one bay diffuses at a time."
+        "description": "Can\u2019t pick a favorite? Let Pura play referee. Adds a HomeKit switch for Pura\u2019s Auto-Alternate setting on multi-bay diffusers. When on, Pura rotates between fragrance bays over time; when off, it sticks with the bay you choose. Either way, only one bay diffuses at a time."
+      },
+      "authMethod": {
+        "title": "Sign-in method",
+        "type": "string",
+        "enum": [
+          "password",
+          "oauth"
+        ],
+        "default": "password",
+        "description": "Password login or the refreshable Apple/OAuth session connected in plugin settings."
       }
-    }
+    },
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "authMethod": {
+              "const": "oauth"
+            }
+          },
+          "required": [
+            "authMethod"
+          ]
+        },
+        "then": {},
+        "else": {
+          "required": [
+            "username",
+            "password"
+          ]
+        }
+      }
+    ]
   },
   "customUi": true
 }

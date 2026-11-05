@@ -1,9 +1,10 @@
+import { PuraOAuthSession } from './oauth.js';
 import type { API, Characteristic, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig, Service } from 'homebridge';
 import WebSocket from 'ws';
 
 import { PuraPlatformAccessory } from './platformAccessory.js';
 import { PuraNightlightAccessory } from './nightlightAccessory.js';
-import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
+import { PLATFORM_NAME, LEGACY_PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 import { PuraApi } from './puraApi.js';
 import { PuraDevice, PuraConfig } from './puraTypes.js';
 import { fetchLatestCognitoConfig } from './pypuraLookup.js';
@@ -88,6 +89,7 @@ export class PuraPlatform implements DynamicPlatformPlugin {
   private attemptedCognitoUpdate = false;
   private latestCognitoVersion: string | null = null;
   private authInFlight: Promise<void> | null = null;
+  private oauthSession: PuraOAuthSession | undefined;
   private webhookRefreshTimer: NodeJS.Timeout | null = null;
   private webhookRefreshDueAt: number | null = null;
   private webhookReceived = false;
@@ -264,7 +266,7 @@ export class PuraPlatform implements DynamicPlatformPlugin {
       // Authenticate with Pura
       this.log.info('Authenticating with Pura...');
       await this.withAuthLock(async () => {
-        await this.puraApi.authenticate(this.puraConfig.username, this.puraConfig.password);
+        await this.authenticateConfigured();
       });
       this.log.info('Pura authentication successful');
 
@@ -303,7 +305,23 @@ export class PuraPlatform implements DynamicPlatformPlugin {
     }
   }
 
+  private get registeredPlatformName(): string {
+    return String(this.config.platform).split('.').pop() === LEGACY_PLATFORM_NAME ? LEGACY_PLATFORM_NAME : PLATFORM_NAME;
+  }
+
+  private async authenticateConfigured(): Promise<void> {
+    if (this.puraConfig.authMethod === 'oauth') {
+      this.oauthSession ??= new PuraOAuthSession(this.api.user.storagePath());
+      await this.puraApi.authenticateOAuth(this.oauthSession);
+    } else {
+      await this.puraApi.authenticate(this.puraConfig.username, this.puraConfig.password);
+    }
+  }
+
   private getMissingRequiredConfig(): string[] {
+    if (this.puraConfig.authMethod === 'oauth') {
+      return [];
+    }
     const missing: string[] = [];
     if (!this.puraConfig.username.trim()) {
       missing.push('username');
@@ -315,6 +333,9 @@ export class PuraPlatform implements DynamicPlatformPlugin {
   }
 
   private async tryAutoUpdateCognito(error: unknown): Promise<boolean> {
+    if (this.puraConfig.authMethod === 'oauth') {
+      return false;
+    }
     if (this.attemptedCognitoUpdate) {
       return false;
     }
@@ -454,7 +475,7 @@ export class PuraPlatform implements DynamicPlatformPlugin {
       accessory.context.accessoryType = 'diffuser';
       accessory.context.serviceMode = serviceMode;
       accessory.handler = new PuraPlatformAccessory(this, accessory, this.puraApi);
-      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+      this.api.registerPlatformAccessories(PLUGIN_NAME, this.registeredPlatformName, [accessory]);
       this.accessories.set(uuid, accessory);
     }
 
@@ -480,7 +501,7 @@ export class PuraPlatform implements DynamicPlatformPlugin {
       accessory.context.device = device;
       accessory.context.accessoryType = 'nightlight';
       accessory.handler = new PuraNightlightAccessory(this, accessory, this.puraApi);
-      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+      this.api.registerPlatformAccessories(PLUGIN_NAME, this.registeredPlatformName, [accessory]);
       this.accessories.set(uuid, accessory);
     }
 
@@ -494,7 +515,7 @@ export class PuraPlatform implements DynamicPlatformPlugin {
       return;
     }
     this.log.info('Removing existing accessory from cache:', accessory.displayName);
-    this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+    this.api.unregisterPlatformAccessories(PLUGIN_NAME, this.registeredPlatformName, [accessory]);
     this.accessories.delete(uuid);
   }
 
@@ -520,7 +541,7 @@ export class PuraPlatform implements DynamicPlatformPlugin {
     for (const [uuid, accessory] of this.accessories) {
       if (!discoveredUuids.has(uuid)) {
         this.log.info('Removing existing accessory from cache:', accessory.displayName);
-        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+        this.api.unregisterPlatformAccessories(PLUGIN_NAME, this.registeredPlatformName, [accessory]);
         this.accessories.delete(uuid);
       }
     }
@@ -648,6 +669,9 @@ export class PuraPlatform implements DynamicPlatformPlugin {
   }
 
   private setupCognitoRefreshInterval() {
+    if (this.puraConfig.authMethod === 'oauth') {
+      return;
+    }
     const intervalSeconds = 3600;
     const interval = intervalSeconds * 1000;
     this.log.debug(`Setting up Cognito refresh interval: ${intervalSeconds} seconds`);
@@ -670,7 +694,7 @@ export class PuraPlatform implements DynamicPlatformPlugin {
           }
           this.log.warn(`Detected new Cognito IDs in pypura ${latest.version}; re-authenticating...`);
           try {
-            await this.puraApi.authenticate(this.puraConfig.username, this.puraConfig.password);
+            await this.authenticateConfigured();
             this.log.info('Re-authenticated with refreshed Cognito IDs.');
             this.attemptedCognitoUpdate = false;
           } catch (authError) {
@@ -1131,7 +1155,7 @@ export class PuraPlatform implements DynamicPlatformPlugin {
     try {
       const devices = await this.puraApi.getDevices();
       await this.reconcileDiscoveredDevices(devices);
-      
+
       for (const device of devices) {
         await this.updateDiffuserAccessory(device);
         await this.updateNightlightAccessory(device);
@@ -1249,7 +1273,7 @@ export class PuraPlatform implements DynamicPlatformPlugin {
       }
 
       try {
-        await this.puraApi.authenticate(this.puraConfig.username, this.puraConfig.password);
+        await this.authenticateConfigured();
         this.log.info('Re-authenticated with Pura during status refresh.');
         this.attemptedCognitoUpdate = false;
         return true;
@@ -1257,7 +1281,7 @@ export class PuraPlatform implements DynamicPlatformPlugin {
         const retried = await this.tryAutoUpdateCognito(authError);
         if (retried) {
           try {
-            await this.puraApi.authenticate(this.puraConfig.username, this.puraConfig.password);
+            await this.authenticateConfigured();
             this.log.info('Re-authenticated after Cognito refresh.');
             this.attemptedCognitoUpdate = false;
             return true;

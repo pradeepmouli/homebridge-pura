@@ -1,18 +1,18 @@
 {
-  "name": "@homebridge-plugins/homebridge-pura",
+  "name": "homebridge-pura",
   "displayName": "Pura Smart Diffuser",
   "type": "module",
   "version": "1.8.1",
   "description": "Homebridge plugin for Pura smart fragrance diffusers",
   "author": "QandnotU",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/homebridge-plugins/homebridge-pura#readme",
+  "homepage": "https://github.com/pradeepmouli/homebridge-pura#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/homebridge-plugins/homebridge-pura.git"
+    "url": "https://github.com/pradeepmouli/homebridge-pura.git"
   },
   "bugs": {
-    "url": "https://github.com/homebridge-plugins/homebridge-pura/issues"
+    "url": "https://github.com/pradeepmouli/homebridge-pura/issues"
   },
   "keywords": [
     "homebridge",
@@ -30,7 +30,7 @@
   "scripts": {
     "build": "node scripts/clean-dist.js && tsc",
     "lint": "eslint . --max-warnings=0",
-    "test": "npm run build && node scripts/test-diffuser-state.js",
+    "test": "pnpm run build && node scripts/test-diffuser-state.js && node --test scripts/test-oauth.js",
     "prepublishOnly": "npm run lint && npm run build",
     "watch": "npm run build && npm link && nodemon"
   },
@@ -38,7 +38,9 @@
     "@homebridge/plugin-ui-utils": "^2.2.0",
     "amazon-cognito-identity-js": "^6.3.20",
     "homebridge-lib": "^7.3.1",
+    "jose": "^5.10.0",
     "node-fetch": "^3.3.2",
+    "proper-lockfile": "^4.1.2",
     "tar": "^7.5.22",
     "ws": "^8.21.3"
   },
@@ -46,6 +48,7 @@
     "@eslint/js": "^10.0.1",
     "@homebridge/hap-nodejs": "^2.1.7",
     "@types/node": "^26.4.0",
+    "@types/proper-lockfile": "^4.1.4",
     "@types/ws": "^8.18.1",
     "eslint": "^10.0.0",
     "homebridge": "^2.1.0",
@@ -53,5 +56,6 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.68.0"
-  }
+  },
+  "packageManager": "pnpm@10.13.1"
 }

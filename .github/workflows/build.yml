@@ -1,58 +1,32 @@
-name: Build and Lint
-
+name: Build and Test
 on: [push, pull_request]
-
 jobs:
   build:
     runs-on: ubuntu-latest
-
     strategy:
       fail-fast: false
       matrix:
-        node-version: [18.x, 20.x, 22.x]
-
+        node-version: [18.x, 20.x, 22.x, 24.x]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Lint the project
-        run: npm run lint
-
-      - name: Build the project
-        run: npm run build
-
-      - name: List, audit, fix outdated dependencies and build again
-        run: |
-          npm list --outdated
-          npm audit || true  # ignore failures
-          npm audit fix || true
-          npm list --outdated
-          npm run build
-
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      # ESLint 10 is development tooling requiring a newer Node than the runtime's minimum.
+      - if: matrix.node-version == '22.x'
+        run: pnpm run lint
   test:
-    name: Test
     runs-on: ubuntu-latest
-
-    # Pinned to a single Node version rather than the build matrix above: the test suite drives
-    # the platform through @homebridge/hap-nodejs, which declares engines ^22 || ^24. The plugin
-    # itself still supports Node 18+, and the build job above is what verifies that.
     steps:
       - uses: actions/checkout@v4
-
-      - name: Use Node.js 22.x
-        uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22.x
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run the test suite
-        run: npm test
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test

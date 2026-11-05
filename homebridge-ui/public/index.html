@@ -199,13 +199,30 @@
           />
         </div>
         <h5 class="card-title">Pura Authentication</h5>
-        <p class="card-text mb-4">Please enter your Pura account credentials.</p>
+        <p class="card-text mb-4">Connect your Pura account. Apple login happens on Apple's website, never in this form.</p>
+        <label class="form-label" for="authMethod">Sign-in method</label>
+        <select class="form-control mb-3" id="authMethod">
+          <option value="password">Pura email and password</option>
+          <option value="oauth">Sign in with Apple / OAuth</option>
+        </select>
+        <div id="oauthPanel" class="d-none mb-4">
+          <button class="btn btn-outline-primary" id="oauthStart" type="button">Start Apple sign-in</button>
+          <a id="oauthLink" class="d-none" target="_blank" rel="noopener noreferrer">Open Pura Apple sign-in</a>
+          <p class="form-text">Pura uses its registered pura://callback address. After signing in, copy the complete
+            callback URL (including code and state) from your browser's attempted Pura-app handoff and paste it below.
+            If your browser cannot show that URL, this manual flow cannot finish there. Do not paste an Apple password or tokens.</p>
+          <label for="oauthCallback">Pura callback URL</label>
+          <input id="oauthCallback" type="password" class="form-control" autocomplete="off" />
+          <button class="btn btn-outline-primary mt-2" id="oauthComplete" type="button">Connect Pura account</button>
+          <p id="oauthStatus" class="form-text" role="status"></p>
+        </div>
 
         <div class="mb-3">
           <label class="form-label" for="name">Name</label>
           <input class="form-control form-control-lg field-half" id="name" type="text" />
         </div>
 
+        <div id="passwordPanel">
         <div class="mb-3">
           <label class="form-label" for="username">Email</label>
           <input class="form-control form-control-lg field-half" id="username" type="email" autocomplete="username" />
@@ -226,6 +243,7 @@
         </div>
 
         <p class="test-hint mt-2" id="testHint">Credentials must be tested before saving.</p>
+        </div>
 
         <h5 class="card-title mt-5">Options</h5>
         <p class="card-text mb-4">Just the right amount of flexibility for the control freak in all of us. Tinker responsibly, though. Some changes may require recreating existing HomeKit scenes or automations for your Pura diffusers.</p>
@@ -306,6 +324,13 @@
       const TEST_HINT_DEFAULT = 'Pura credentials must be verified before saving.';
       const TEST_HINT_SUCCESS = 'Pura credentials verified. Save to apply changes.';
 
+      let oauthConnected = false;
+      const authMethod = document.getElementById('authMethod');
+      const oauthStatus = document.getElementById('oauthStatus');
+      const setAuthPanel = () => {
+        document.getElementById('oauthPanel').classList.toggle('d-none', authMethod.value !== 'oauth');
+        document.getElementById('passwordPanel').classList.toggle('d-none', authMethod.value === 'oauth');
+      };
       const els = {
         name: document.getElementById('name'),
         username: document.getElementById('username'),
@@ -461,6 +486,12 @@
 
       const updateSaveState = () => {
         applyThemeColorFromNativeSave();
+        if (authMethod.value === 'oauth') {
+          if (oauthConnected) { homebridge.enableSaveButton(); }
+          else { homebridge.disableSaveButton(); }
+          setNativeSaveTooltip(oauthConnected ? '' : 'Connect your Pura account before saving.');
+          return;
+        }
         const hasRequired = hasCredentialInputs();
         const hasFreshTest = hasFreshCredentialTest();
         const credentialsUnchanged = !credentialsChangedFromInitial();
@@ -475,7 +506,7 @@
 
       const currentConfigBlock = async () => {
         const configBlocks = await homebridge.getPluginConfig();
-        const existing = configBlocks.find((x) => x.platform === PLATFORM_NAME);
+        const existing = configBlocks.find((x) => [PLATFORM_NAME, 'PuraFragranceDiffuser'].includes(String(x.platform).split('.').pop()));
         return existing || {
           platform: PLATFORM_NAME,
           name: DEFAULT_NAME,
@@ -490,18 +521,24 @@
       };
 
       const syncConfig = async () => {
+        const blocks = await homebridge.getPluginConfig();
+        const index = blocks.findIndex((x) => [PLATFORM_NAME, 'PuraFragranceDiffuser'].includes(String(x.platform).split('.').pop()));
+        const current = index >= 0 ? blocks[index] : await currentConfigBlock();
         const config = {
-          platform: PLATFORM_NAME,
+          ...current,
+          platform: current.platform || PLATFORM_NAME,
+          authMethod: authMethod.value,
           name: els.name.value.trim() || DEFAULT_NAME,
           username: els.username.value.trim(),
-          password: els.password.value,
+          password: authMethod.value === 'oauth' ? '' : els.password.value,
           forceNightlightOff: !!els.forceNightlightOff.checked,
           enableFanService: !!els.enableFanService.checked,
           enableBayControl: !!els.enableBayControl.checked,
           enableNightlightAccessory: !!els.enableNightlightAccessory.checked,
           enableAutoAlternate: !!els.enableAutoAlternate.checked,
         };
-        await homebridge.updatePluginConfig([config]);
+        if (index >= 0) { blocks[index] = config; } else { blocks.push(config); }
+        await homebridge.updatePluginConfig(blocks);
       };
 
       const markCredentialsDirtyIfNeeded = () => {
@@ -525,6 +562,39 @@
         applyThemeColorFromNativeSave();
 
         const current = await currentConfigBlock();
+        authMethod.value = current.authMethod === 'oauth' ? 'oauth' : 'password';
+        setAuthPanel();
+        const connection = await homebridge.request('/oauth/status');
+        oauthConnected = connection.connected;
+        oauthStatus.textContent = oauthConnected ? `Connected to Pura${connection.email ? ': ' + connection.email : ''}` : 'Not connected';
+        authMethod.addEventListener('change', async () => {
+          setAuthPanel();
+          updateSaveState();
+          if (authMethod.value !== 'oauth' || oauthConnected) { await syncConfig(); }
+        });
+        document.getElementById('oauthStart').addEventListener('click', async () => {
+          try {
+            const result = await homebridge.request('/oauth/start');
+            const link = document.getElementById('oauthLink');
+            link.href = result.authorizationUrl;
+            link.classList.remove('d-none');
+            oauthStatus.textContent = 'Open the sign-in link, then paste the callback URL. This attempt expires in 10 minutes.';
+          } catch { oauthStatus.textContent = 'Unable to start Pura sign-in. Try reopening the settings.'; }
+        });
+        document.getElementById('oauthComplete').addEventListener('click', async () => {
+          const input = document.getElementById('oauthCallback');
+          const callbackUrl = input.value.trim();
+          input.value = '';
+          try {
+            const result = await homebridge.request('/oauth/complete', { callbackUrl });
+            oauthConnected = true;
+            oauthStatus.textContent = `Connected to Pura${result.email ? ': ' + result.email : ''}. Save and restart the child bridge.`;
+            document.getElementById('oauthLink').removeAttribute('href');
+            document.getElementById('oauthLink').classList.add('d-none');
+            await syncConfig();
+          } catch (error) { oauthStatus.textContent = error?.message || 'Pura sign-in failed. Start again.'; }
+          updateSaveState();
+        });
         els.name.value = current.name || DEFAULT_NAME;
         // Load stored credentials so users can review/update without losing values.
         els.username.value = current.username || '';

@@ -82,6 +82,44 @@ Some changes may require recreating existing HomeKit scenes or automations for y
 - **enableNightlightAccessory (Enable Nightlight Controls)**: Set the vibe along with the scent. Adds HomeKit controls for the nightlight, including On/Off, Brightness, and Color, on compatible diffusers. (default: false)
 - **enableAutoAlternate (Enable Auto-Alternate Control)**: Can’t pick a favorite? Let Pura play referee. Adds a HomeKit switch for Pura’s Auto-Alternate setting on multi-bay diffusers. When on, Pura rotates between fragrance bays over time; when off, it sticks with the bay you choose. Either way, only one bay diffuses at a time. (default: false)
 
+## Apple / OAuth sign-in (preview)
+
+This fork tracks [the maintained Pura plugin](https://github.com/homebridge-plugins/homebridge-pura),
+while retaining the `homebridge-pura` package name and accepting the original `PuraFragranceDiffuser`
+platform alias. The maintained `PuraSmartDiffuser` alias is also accepted. Existing child-bridge
+settings are retained when editing configuration in the custom UI. Upstream has changed control
+layouts since 1.0.0; review the intensity/bay options before upgrading an existing installation.
+
+For an account created with Sign in with Apple, select **Sign in with Apple / OAuth** in plugin
+settings, then **Start Apple sign-in** and open the generated link. Enter Apple credentials only on
+Apple's website. Password login remains the default for existing configurations.
+
+Pura accepts its registered mobile callback `pura://callback`, and rejects arbitrary Homebridge
+callback addresses. This preview therefore requires a **manual callback handoff**: after Apple login,
+copy the complete attempted `pura://callback?code=...&state=...` URL into the plugin's callback field
+and choose **Connect Pura account**. The callback field is masked and cleared after submission.
+Do not paste the URL or tokens into chat, logs, or config.json. If your browser opens the Pura app
+without exposing the handoff URL, or cannot display/copy that URL, this flow cannot finish in that
+browser yet. Reopening settings or starting another attempt invalidates the earlier login attempt.
+Real Apple login and browser handoff still require an end-to-end user test; the feature is not
+advertised as a completed one-click browser integration.
+
+Disable the separate `@homebridge-plugins/homebridge-pura` installation before running this fork;
+both register the maintained platform alias and should not control the same account concurrently.
+After connecting, **Save** and restart only the Pura child bridge. JSON configuration needs
+`"authMethod": "oauth"`; it does not need a Pura or Apple password in that mode. A private refreshable
+session lives at `<Homebridge storage>/pura-oauth/session.json` (directory 0700, file 0600). This file
+is a credential: protect backups and never include it in bug reports. Tokens are verified against
+Pura's Cognito signing keys, issuer, client and nonce, and refresh-token rotation is persisted
+atomically with a shared UI/runtime lock. A replacement account requires a child restart so cached
+accessories cannot silently switch accounts. To disconnect, stop the Pura child, remove its private
+session file, then leave it stopped or configure another login method.
+
+Maintainer verification on 2026-11-05: Pura's OIDC discovery identifies `auth.pura.co`; a PKCE
+code request for `pura://callback` reaches Apple's authorization page. Automated tests cover the
+exchange, token verification, replay/expiry rejection, refresh and persistence using synthetic keys
+and mocked provider responses. They do not substitute for the pending real Apple sign-in test.
+
 ## Usage
 
 By default, each diffuser appears as a single switch in HomeKit (e.g., "Living Room Diffuser").
