@@ -600,6 +600,17 @@
         const sendCode = document.getElementById('emailSend');
         const verifyCode = document.getElementById('emailVerify');
         emailInput.value = current.username || '';
+        try {
+          const pending = await homebridge.request('/oauth/email/status');
+          if (pending) {
+            emailAttemptId = pending.attemptId;
+            emailInput.value = pending.email;
+            verifyCode.disabled = false;
+            showAuthStatus('Sign-in restored. Enter the latest code from your email, then Verify and connect.');
+          }
+        } catch {
+          showAuthStatus('Unable to restore sign-in. Request a new code in this window.', true);
+        }
         sendCode.addEventListener('click', async () => {
           sendCode.disabled = true;
           verifyCode.disabled = true;

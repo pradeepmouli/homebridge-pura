@@ -96,9 +96,11 @@ account email and choose **Send sign-in code**. Enter the six-digit code from yo
 an Apple-created account when Pura supports email-code access for that email; confirm that the
 expected diffusers appear after connecting. No Apple password or cookie copying is required.
 
-The UI keeps the pending challenge in memory for up to ten minutes, permits five verification
-attempts, and limits resend requests. Reopening the settings requires a new code. Codes and
-challenge session IDs are never written to config.json or the persistent token store. Password
+The UI keeps the pending challenge in a private `pura-oauth/email-login.json` file (0600), valid
+for up to ten minutes. It survives settings-server reconnects and page reloads, permits five
+verification attempts, and limits resend requests across processes. Success removes the challenge;
+expired records are removed on the next access. Verification codes are never stored. Challenge
+session IDs never enter config.json or the long-term token store. Password
 login remains available for existing configurations.
 
 **Advanced: import an existing website session** retains the manual fallback: sign in on pura.com,

@@ -11,6 +11,7 @@ class UiServer extends HomebridgePluginUiServer {
     const oauth = new PuraOAuthSession(this.homebridgeStoragePath);
     this.onRequest('/oauth/start', () => oauth.start());
     this.onRequest('/oauth/status', () => oauth.status());
+    this.onRequest('/oauth/email/status', () => oauth.emailStatus());
     this.onRequest('/oauth/email/start', async payload => {
       if (typeof payload?.email !== 'string' || payload.email.length > 254) {
         throw new RequestError('Enter your existing Pura account email address.');

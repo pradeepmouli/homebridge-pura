@@ -11,7 +11,7 @@ type Fetcher = typeof globalThis.fetch;
 type Claims = Record<string, unknown>;
 type Pending = { state: string; nonce: string; verifier: string; expires: number };
 type PendingEmail = {
-  attemptId: string; email: string; sessionId: string; expiresAt: number; tries: number; busy: boolean;
+  attemptId: string; email: string; sessionId: string; createdAt: number; expiresAt: number; tries: number;
 };
 type SessionTokens = PuraAuthTokens & { provider?: 'website' };
 type SavedSession = { version: 1; clientId: string; tokens: SessionTokens };
@@ -30,8 +30,6 @@ export class PuraOAuthSession {
   private refreshing: Promise<PuraAuthTokens> | undefined;
   private keys: JWK[] | undefined;
   private subject: string | undefined;
-  private emailAttempt: PendingEmail | undefined;
-  private lastEmailStart: number | undefined;
   readonly sessionPath: string;
 
   constructor(
@@ -158,83 +156,115 @@ export class PuraOAuthSession {
     }
   }
 
+  private get emailPath(): string {
+    return path.join(path.dirname(this.sessionPath), 'email-login.json');
+  }
+
+  async emailStatus(): Promise<{ attemptId: string; email: string; expiresAt: number } | null> {
+    return this.withSessionLock(async () => {
+      const pending = await this.readEmail();
+      if (!pending?.sessionId || pending.tries >= 5) {
+        return null;
+      }
+      return { attemptId: pending.attemptId, email: pending.email, expiresAt: pending.expiresAt };
+    });
+  }
+
+  private async readEmail(): Promise<PendingEmail | undefined> {
+    let pending: PendingEmail;
+    try {
+      pending = JSON.parse(await fs.readFile(this.emailPath, 'utf8')) as PendingEmail;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return undefined;
+      }
+      if (!(error instanceof SyntaxError)) {
+        throw new Error('Unable to read Pura sign-in storage. Check Homebridge storage permissions.', { cause: error });
+      }
+      await fs.rm(this.emailPath, { force: true });
+      return undefined;
+    }
+    if (!pending || typeof pending.attemptId !== 'string' || !pending.attemptId || pending.attemptId.length > 128
+      || typeof pending.email !== 'string' || pending.email.length > 254
+      || typeof pending.sessionId !== 'string' || pending.sessionId.length > 16384
+      || !Number.isInteger(pending.tries) || pending.tries < 0 || pending.tries > 5
+      || !Number.isFinite(pending.createdAt) || !Number.isFinite(pending.expiresAt)
+      || pending.createdAt > this.now() + 60_000 || pending.expiresAt <= this.now()
+      || pending.expiresAt - pending.createdAt !== 10 * 60_000) {
+      await fs.rm(this.emailPath, { force: true });
+      return undefined;
+    }
+    return pending;
+  }
+
   async startEmail(emailValue: string): Promise<{ attemptId: string; expiresAt: number }> {
     const email = emailValue.trim();
     if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new Error('Enter your existing Pura account email address.');
     }
-    if (this.lastEmailStart !== undefined && this.now() - this.lastEmailStart < 30_000) {
-      throw new Error('Wait 30 seconds before requesting another email code.');
-    }
-    if (this.emailAttempt?.busy) {
-      throw new Error('Pura email sign-in is already in progress.');
-    }
-    this.lastEmailStart = this.now();
-    this.emailAttempt = undefined;
-    const attemptId = randomBytes(32).toString('base64url');
-    const expiresAt = this.now() + 10 * 60_000;
-    // Reserve the attempt before I/O so stale responses cannot replace a newer attempt.
-    const pending: PendingEmail = { attemptId, email, expiresAt, sessionId: '', tries: 0, busy: true };
-    this.emailAttempt = pending;
-    try {
-      const data = await this.loginRequest({ method: 'otp', email });
-      if (this.emailAttempt !== pending || this.now() >= expiresAt || typeof data.sessionId !== 'string'
-        || !data.sessionId || data.sessionId.length > 16384) {
-        throw new Error();
+    return this.withSessionLock(async () => {
+      const previous = await this.readEmail();
+      if (previous && this.now() - previous.createdAt < 30_000) {
+        throw new Error('Wait 30 seconds before requesting another email code.');
       }
-      pending.sessionId = data.sessionId;
-      pending.busy = false;
-      return { attemptId, expiresAt };
-    } catch {
-      if (this.emailAttempt === pending) {
-        this.emailAttempt = undefined;
+      const createdAt = this.now();
+      const pending: PendingEmail = {
+        attemptId: randomBytes(32).toString('base64url'), email, sessionId: '',
+        createdAt, expiresAt: createdAt + 10 * 60_000, tries: 0,
+      };
+      // Persist the cooldown even when delivery fails; no verification code is stored.
+      await this.writePrivateJson(this.emailPath, pending);
+      try {
+        const data = await this.loginRequest({ method: 'otp', email });
+        if (this.now() >= pending.expiresAt || typeof data.sessionId !== 'string'
+          || !data.sessionId || data.sessionId.length > 16384) {
+          throw new Error();
+        }
+        pending.sessionId = data.sessionId;
+        await this.writePrivateJson(this.emailPath, pending);
+        return { attemptId: pending.attemptId, expiresAt: pending.expiresAt };
+      } catch {
+        throw new Error('Unable to send the Pura email code. Wait briefly and try again.');
       }
-      throw new Error('Unable to send the Pura email code. Wait briefly and try again.');
-    }
+    });
   }
 
   async verifyEmail(attemptId: string, code: string): Promise<{ connected: true; email: string }> {
-    const pending = this.emailAttempt;
-    if (!pending || pending.attemptId !== attemptId || this.now() >= pending.expiresAt || pending.tries >= 5) {
-      throw new Error('Pura email sign-in expired. Request a new code.');
-    }
-    if (pending.busy) {
-      throw new Error('Pura email sign-in is already in progress.');
-    }
     if (!/^\d{6}$/.test(code)) {
       throw new Error('Enter the six-digit code from your Pura email.');
     }
-    pending.busy = true;
-    pending.tries++;
-    let failure = 'Pura could not verify the code. Request a fresh code in this same settings window and try again.';
-    try {
-      const data = await this.loginRequest({
-        method: 'otpVerify', email: pending.email, sessionId: pending.sessionId, code,
-      });
-      failure = 'Pura accepted the code but did not return a usable refresh credential. The plugin needs a compatibility update.';
-      const credential = data.prt;
-      const refreshValue = typeof credential === 'string' ? credential
-        : credential && typeof credential === 'object' && 'token' in credential ? credential.token : undefined;
-      if (typeof refreshValue !== 'string' || this.emailAttempt !== pending || this.now() >= pending.expiresAt) {
-        throw new Error();
+    return this.withSessionLock(async () => {
+      const pending = await this.readEmail();
+      if (!pending?.sessionId || pending.attemptId !== attemptId || pending.tries >= 5) {
+        throw new Error('Pura email sign-in expired or was replaced. Request a new code in this window.');
       }
-      // Reuse the native refresh exchange and account checks; do not persist an OTP or sessionId.
-      failure = 'Pura accepted the code but could not renew the login session. Try signing in again.';
-      const tokens = await this.exchangeWebsite(refreshValue);
-      failure = 'Pura returned a different account or the sign-in expired. Request a fresh code for your existing account email.';
-      if (this.emailAttempt !== pending || this.now() >= pending.expiresAt
-        || String(claims(tokens.idToken).email ?? '').toLowerCase() !== pending.email.toLowerCase()) {
-        throw new Error();
+      pending.tries++;
+      await this.writePrivateJson(this.emailPath, pending);
+      let failure = 'Pura could not verify the code. Request a fresh code in this same settings window and try again.';
+      try {
+        const data = await this.loginRequest({
+          method: 'otpVerify', email: pending.email, sessionId: pending.sessionId, code,
+        });
+        failure = 'Pura accepted the code but did not return a usable refresh credential. The plugin needs a compatibility update.';
+        const credential = data.prt;
+        const refreshValue = typeof credential === 'string' ? credential
+          : credential && typeof credential === 'object' && 'token' in credential ? credential.token : undefined;
+        if (typeof refreshValue !== 'string') {
+          throw new Error();
+        }
+        failure = 'Pura accepted the code but could not renew the login session. Try signing in again.';
+        const tokens = await this.exchangeWebsite(refreshValue);
+        failure = 'Pura returned a different account or the sign-in expired. Request a fresh code for your existing account email.';
+        if (this.now() >= pending.expiresAt
+          || String(claims(tokens.idToken).email ?? '').toLowerCase() !== pending.email.toLowerCase()) {
+          throw new Error();
+        }
+        failure = 'Pura verified the account but the private session could not be saved. Check Homebridge storage permissions.';
+        return await this.commitConnection(tokens);
+      } catch {
+        throw new Error(failure);
       }
-      failure = 'Pura verified the account but the private session could not be saved. Check Homebridge storage permissions.';
-      const connected = await this.acceptConnection(tokens, () => this.emailAttempt === pending && this.now() < pending.expiresAt);
-      this.emailAttempt = undefined;
-      return connected;
-    } catch {
-      throw new Error(failure);
-    } finally {
-      pending.busy = false;
-    }
+    });
   }
 
   private async loginRequest(fields: Record<string, string>): Promise<Record<string, unknown>> {
@@ -258,15 +288,13 @@ export class PuraOAuthSession {
     return this.acceptConnection(tokens);
   }
 
-  private async acceptConnection(
-    tokens: SessionTokens, valid: () => boolean = () => true,
-  ): Promise<{ connected: true; email: string }> {
-    await this.withSessionLock(async () => {
-      if (!valid()) {
-        throw new Error('Pura sign-in expired. Start again.');
-      }
-      await this.save(tokens);
-    });
+  private async acceptConnection(tokens: SessionTokens): Promise<{ connected: true; email: string }> {
+    return this.withSessionLock(() => this.commitConnection(tokens));
+  }
+
+  private async commitConnection(tokens: SessionTokens): Promise<{ connected: true; email: string }> {
+    await fs.rm(this.emailPath, { force: true });
+    await this.save(tokens);
     this.subject = String(claims(tokens.idToken).sub);
     return { connected: true, email: String(claims(tokens.idToken).email ?? '') };
   }
@@ -431,12 +459,14 @@ export class PuraOAuthSession {
   }
 
   private async save(tokens: SessionTokens): Promise<void> {
-    const temporary = `${this.sessionPath}.${randomBytes(8).toString('hex')}.tmp`;
+    await this.writePrivateJson(this.sessionPath, { version: 1, clientId: DEFAULT_CLIENT_ID, tokens } satisfies SavedSession);
+  }
+
+  private async writePrivateJson(target: string, value: unknown): Promise<void> {
+    const temporary = `${target}.${randomBytes(8).toString('hex')}.tmp`;
     try {
-      await fs.writeFile(temporary, JSON.stringify({ version: 1, clientId: DEFAULT_CLIENT_ID, tokens } satisfies SavedSession), {
-        flag: 'wx', mode: 0o600,
-      });
-      await fs.rename(temporary, this.sessionPath);
+      await fs.writeFile(temporary, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
+      await fs.rename(temporary, target);
     } finally {
       await fs.rm(temporary, { force: true });
     }

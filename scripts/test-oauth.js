@@ -349,7 +349,7 @@ async function emailFixture(t) {
     return Response.json(response);
   };
   return {
-    ...f, session: new PuraOAuthSession(f.directory, fetcher, f.now),
+    ...f, emailFetcher: fetcher, session: new PuraOAuthSession(f.directory, fetcher, f.now),
     starts: () => starts, verifications: () => verifications,
     rejectCodes: () => {
       bad = true;
@@ -447,4 +447,52 @@ test('email verification identifies renewal failure without exposing provider de
     assert.doesNotMatch(error.message, /upstream private|email-refresh|123456/);
     return true;
   });
+});
+
+
+test('email challenge survives a settings-server restart without saving the code', async t => {
+  const f = await emailFixture(t);
+  const attempt = await f.session.startEmail('website@example.invalid');
+  const restarted = new PuraOAuthSession(f.directory, f.emailFetcher, f.now);
+  assert.deepEqual(await restarted.verifyEmail(attempt.attemptId, '123456'), {
+    connected: true, email: 'website@example.invalid',
+  });
+  assert.equal(f.verifications(), 1);
+});
+
+test('email resend cooldown survives a settings-server restart', async t => {
+  const f = await emailFixture(t);
+  await f.session.startEmail('website@example.invalid');
+  const restarted = new PuraOAuthSession(f.directory, f.emailFetcher, f.now);
+  await assert.rejects(restarted.startEmail('website@example.invalid'), /30 seconds/);
+  assert.equal(f.starts(), 1);
+});
+
+
+test('restored email challenge exposes only resume metadata, expires and is cleaned up', async t => {
+  const f = await emailFixture(t);
+  const attempt = await f.session.startEmail('website@example.invalid');
+  const restarted = new PuraOAuthSession(f.directory, f.emailFetcher, f.now);
+  const status = await restarted.emailStatus();
+  assert.deepEqual(status, { ...attempt, email: 'website@example.invalid' });
+  const challengeFile = path.join(f.directory, 'pura-oauth', 'email-login.json');
+  assert.equal((await fs.stat(challengeFile)).mode & 0o777, 0o600);
+  assert.doesNotMatch(await fs.readFile(challengeFile, 'utf8'), /123456/);
+  f.advance(600_001);
+  assert.equal(await restarted.emailStatus(), null);
+  await assert.rejects(fs.stat(challengeFile), { code: 'ENOENT' });
+});
+
+test('email verification attempt limit survives repeated settings-server restarts', async t => {
+  const f = await emailFixture(t);
+  const attempt = await f.session.startEmail('website@example.invalid');
+  f.rejectCodes();
+  for (let i = 0; i < 5; i++) {
+    const restarted = new PuraOAuthSession(f.directory, f.emailFetcher, f.now);
+    await assert.rejects(restarted.verifyEmail(attempt.attemptId, '123456'), /could not verify/);
+  }
+  const restarted = new PuraOAuthSession(f.directory, f.emailFetcher, f.now);
+  await assert.rejects(restarted.verifyEmail(attempt.attemptId, '123456'), /expired/);
+  assert.equal(await restarted.emailStatus(), null);
+  assert.equal(f.verifications(), 5);
 });
