@@ -16,6 +16,8 @@ type PendingEmail = {
 type SessionTokens = PuraAuthTokens & { provider?: 'website' };
 type SavedSession = { version: 1; clientId: string; tokens: SessionTokens };
 
+class EmailRequestError extends Error {}
+
 function claims(token: string): Claims {
   try {
     return decodeJwt(token);
@@ -261,21 +263,37 @@ export class PuraOAuthSession {
         }
         failure = 'Pura verified the account but the private session could not be saved. Check Homebridge storage permissions.';
         return await this.commitConnection(tokens);
-      } catch {
-        throw new Error(failure);
+      } catch (error) {
+        throw new Error(error instanceof EmailRequestError
+          ? error.message : failure, { cause: error });
       }
     });
   }
 
   private async loginRequest(fields: Record<string, string>): Promise<Record<string, unknown>> {
-    const response = await this.fetcher(WEBSITE_LOGIN_URL, {
-      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(fields),
-    });
-    if (!response.ok) {
-      throw new Error('Pura email sign-in request failed.');
+    let response: Response;
+    try {
+      response = await this.fetcher(WEBSITE_LOGIN_URL, {
+        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(fields),
+      });
+    } catch {
+      throw new EmailRequestError('Homebridge could not reach Pura to verify the code. Check its internet connection and try again.');
     }
-    return await response.json() as Record<string, unknown>;
+    if (!response.ok) {
+      // Never echo the provider body: it may contain credentials or personal data.
+      const reason = response.status === 401 || response.status === 403
+        ? 'Pura rejected the email code or challenge'
+        : response.status === 429 ? 'Pura received too many sign-in attempts; wait before retrying'
+          : response.status >= 500 ? 'Pura sign-in is temporarily unavailable'
+            : 'Pura did not accept the verification request';
+      throw new EmailRequestError(`${reason} (HTTP ${response.status}).`);
+    }
+    try {
+      return await response.json() as Record<string, unknown>;
+    } catch {
+      throw new EmailRequestError('Pura returned an unreadable sign-in response. Try again later.');
+    }
   }
 
   async connectWebsite(refreshValue: string): Promise<{ connected: true; email: string }> {

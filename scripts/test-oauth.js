@@ -489,10 +489,33 @@ test('email verification attempt limit survives repeated settings-server restart
   f.rejectCodes();
   for (let i = 0; i < 5; i++) {
     const restarted = new PuraOAuthSession(f.directory, f.emailFetcher, f.now);
-    await assert.rejects(restarted.verifyEmail(attempt.attemptId, '123456'), /could not verify/);
+    await assert.rejects(restarted.verifyEmail(attempt.attemptId, '123456'), /rejected.*HTTP 401/);
   }
   const restarted = new PuraOAuthSession(f.directory, f.emailFetcher, f.now);
   await assert.rejects(restarted.verifyEmail(attempt.attemptId, '123456'), /expired/);
   assert.equal(await restarted.emailStatus(), null);
   assert.equal(f.verifications(), 5);
+});
+
+test('email verification distinguishes provider rejection, HTTP failure and transport failure without secrets', async t => {
+  for (const [response, expected] of [
+    [() => new Response('private code and session', { status: 401 }), /rejected.*HTTP 401/],
+    [() => new Response('private code and session', { status: 400 }), /request.*HTTP 400/],
+    [() => new Response('private code and session', { status: 429 }), /too many.*HTTP 429/],
+    [() => new Response('private code and session', { status: 503 }), /unavailable.*HTTP 503/],
+    [() => {
+      throw new TypeError('private code and session');
+    }, /could not reach Pura/],
+  ]) {
+    const f = await emailFixture(t);
+    const fetcher = (url, options) => JSON.parse(options.body).method === 'otpVerify'
+      ? response() : f.emailFetcher(url, options);
+    const session = new PuraOAuthSession(f.directory, fetcher, f.now);
+    const attempt = await session.startEmail('website@example.invalid');
+    await assert.rejects(session.verifyEmail(attempt.attemptId, '123456'), error => {
+      assert.match(error.message, expected);
+      assert.doesNotMatch(error.message, /private code|123456|private-session/);
+      return true;
+    });
+  }
 });
