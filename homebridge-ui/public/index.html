@@ -203,9 +203,17 @@
         <label class="form-label" for="authMethod">Sign-in method</label>
         <select class="form-control mb-3" id="authMethod">
           <option value="password">Pura email and password</option>
-          <option value="oauth">Sign in with Apple / OAuth</option>
+          <option value="oauth">Pura website session (Apple / Google / password)</option>
         </select>
         <div id="oauthPanel" class="d-none mb-4">
+          <a href="https://pura.com/account/login" target="_blank" rel="noopener noreferrer">Sign in on Pura's website</a>
+          <p class="form-text">After signing in, open your browser's developer tools → Application/Storage → Cookies →
+            https://pura.com. Copy only the value of <code>__prt</code> into the field below.
+            This is an account credential: never share it in chat, logs or config.json. Renewal happens automatically.</p>
+          <label for="websiteRefresh">Pura website refresh value (__prt)</label>
+          <input id="websiteRefresh" type="password" class="form-control" autocomplete="off" spellcheck="false" />
+          <button class="btn btn-outline-primary mt-2" id="websiteConnect" type="button">Connect website session</button>
+          <details class="mt-3"><summary>Experimental mobile OAuth callback</summary>
           <button class="btn btn-outline-primary" id="oauthStart" type="button">Start Apple sign-in</button>
           <a id="oauthLink" class="d-none" target="_blank" rel="noopener noreferrer">Open Pura Apple sign-in</a>
           <p class="form-text">Pura uses its registered pura://callback address. After signing in, copy the complete
@@ -214,6 +222,7 @@
           <label for="oauthCallback">Pura callback URL</label>
           <input id="oauthCallback" type="password" class="form-control" autocomplete="off" />
           <button class="btn btn-outline-primary mt-2" id="oauthComplete" type="button">Connect Pura account</button>
+          </details>
           <p id="oauthStatus" class="form-text" role="status"></p>
         </div>
 
@@ -571,6 +580,24 @@
           setAuthPanel();
           updateSaveState();
           if (authMethod.value !== 'oauth' || oauthConnected) { await syncConfig(); }
+        });
+        document.getElementById('websiteConnect').addEventListener('click', async () => {
+          const input = document.getElementById('websiteRefresh');
+          const refreshValue = input.value.trim();
+          input.value = '';
+          const button = document.getElementById('websiteConnect');
+          button.disabled = true;
+          try {
+            const result = await homebridge.request('/oauth/website', { refreshValue });
+            oauthConnected = true;
+            oauthStatus.textContent = `Connected to Pura${result.email ? ': ' + result.email : ''}. Save and restart the child bridge.`;
+            await syncConfig();
+          } catch (error) {
+            oauthStatus.textContent = error?.message || 'Unable to connect the Pura website session.';
+          } finally {
+            button.disabled = false;
+            updateSaveState();
+          }
         });
         document.getElementById('oauthStart').addEventListener('click', async () => {
           try {

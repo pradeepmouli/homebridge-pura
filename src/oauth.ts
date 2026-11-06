@@ -4,13 +4,14 @@ import type { JWK } from 'jose';
 import lockfile from 'proper-lockfile';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_CLIENT_ID, OAUTH_DOMAIN, OAUTH_ISSUER, OAUTH_REDIRECT_URI } from './authConfig.js';
+import { DEFAULT_CLIENT_ID, OAUTH_DOMAIN, OAUTH_ISSUER, OAUTH_REDIRECT_URI, WEBSITE_REFRESH_URL } from './authConfig.js';
 import type { PuraAuthTokens } from './puraTypes.js';
 
 type Fetcher = typeof globalThis.fetch;
 type Claims = Record<string, unknown>;
 type Pending = { state: string; nonce: string; verifier: string; expires: number };
-type SavedSession = { version: 1; clientId: string; tokens: PuraAuthTokens };
+type SessionTokens = PuraAuthTokens & { provider?: 'website' };
+type SavedSession = { version: 1; clientId: string; tokens: SessionTokens };
 
 function claims(token: string): Claims {
   try {
@@ -99,6 +100,11 @@ export class PuraOAuthSession {
 
   async current(): Promise<PuraAuthTokens> {
     const saved = await this.read();
+    // Website tokens are authenticated by the fixed HTTPS refresh endpoint on restore.
+    // They use a different issuer/key set from Cognito; never accept imported JWTs.
+    if (saved.provider === 'website') {
+      return this.refresh();
+    }
     if ([saved.idToken, saved.accessToken].some(token => Number(claims(token).exp) * 1000 <= this.now() + 60_000)) {
       return this.refresh();
     }
@@ -123,7 +129,9 @@ export class PuraOAuthSession {
           await this.validate(previous);
           return previous;
         }
-        const tokens = await this.exchange({ grant_type: 'refresh_token', refresh_token: previous.refreshToken }, previous.refreshToken);
+        const tokens = previous.provider === 'website'
+          ? await this.exchangeWebsite(previous.refreshToken)
+          : await this.exchange({ grant_type: 'refresh_token', refresh_token: previous.refreshToken }, previous.refreshToken);
         await this.validate(tokens);
         if (claims(tokens.idToken).sub !== claims(previous.idToken).sub) {
           throw new Error('Pura OAuth account changed. Sign in again.');
@@ -144,6 +152,64 @@ export class PuraOAuthSession {
       return { connected: true, email: String(claims(tokens.idToken).email ?? '') };
     } catch {
       return { connected: false };
+    }
+  }
+
+  async connectWebsite(refreshValue: string): Promise<{ connected: true; email: string }> {
+    const prt = refreshValue.trim();
+    if (!prt || prt.length > 16384 || [...prt].some(character => character.charCodeAt(0) <= 32 || character.charCodeAt(0) === 127)) {
+      throw new Error('Paste only the __prt cookie value from your signed-in Pura website.');
+    }
+    const tokens = await this.exchangeWebsite(prt);
+    // An explicit connection may replace the account; existing runtime instances stay pinned.
+    await this.withSessionLock(() => this.save(tokens));
+    this.subject = String(claims(tokens.idToken).sub);
+    return { connected: true, email: String(claims(tokens.idToken).email ?? '') };
+  }
+
+  private async exchangeWebsite(prt: string): Promise<SessionTokens> {
+    try {
+      const response = await this.fetcher(WEBSITE_REFRESH_URL, {
+        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prt }),
+      });
+      if (!response.ok) {
+        throw new Error();
+      }
+      const data = await response.json() as {
+        pat?: { token?: unknown }; pit?: { token?: unknown }; prt?: unknown;
+      };
+      if (typeof data.pat?.token !== 'string' || typeof data.pit?.token !== 'string'
+        || (data.prt !== undefined && (typeof data.prt !== 'string' || !data.prt))) {
+        throw new Error();
+      }
+      const tokens: SessionTokens = {
+        provider: 'website', accessToken: data.pat.token, idToken: data.pit.token,
+        refreshToken: typeof data.prt === 'string' ? data.prt : prt,
+      };
+      this.validateWebsite(tokens);
+      return tokens;
+    } catch {
+      throw new Error('Pura website session renewal failed. Sign in at pura.com and import a fresh __prt cookie value.');
+    }
+  }
+
+  private validateWebsite(tokens: SessionTokens): void {
+    const id = claims(tokens.idToken);
+    const access = claims(tokens.accessToken);
+    for (const [token, data, issuer] of [
+      [tokens.idToken, id, 'pura'],
+      [tokens.accessToken, access, 'https://user.trypura.io/v1/auth/issue'],
+    ] as const) {
+      if (decodeProtectedHeader(token).alg !== 'ES256' || data.iss !== issuer || data.aud !== 'pura'
+        || typeof data.sub !== 'string' || !data.sub || typeof data.exp !== 'number'
+        || data.exp * 1000 <= this.now() || typeof data.iat !== 'number'
+        || data.iat * 1000 > this.now() + 60_000) {
+        throw new Error('Invalid Pura website session response. Sign in again.');
+      }
+    }
+    if (id.sub !== access.sub) {
+      throw new Error('Pura website tokens belong to different accounts.');
     }
   }
 
@@ -168,7 +234,14 @@ export class PuraOAuthSession {
     }
   }
 
-  private async validate(tokens: PuraAuthTokens, nonce?: string): Promise<void> {
+  private async validate(tokens: SessionTokens, nonce?: string): Promise<void> {
+    if (tokens.provider === 'website') {
+      this.validateWebsite(tokens);
+      if (this.subject && this.subject !== claims(tokens.idToken).sub) {
+        throw new Error('Pura account changed. Restart the child bridge to load the new account.');
+      }
+      return;
+    }
     const id = await this.verifyToken(tokens.idToken, 'id');
     const access = await this.verifyToken(tokens.accessToken, 'access');
     if (id.aud !== DEFAULT_CLIENT_ID || access.client_id !== DEFAULT_CLIENT_ID || typeof id.sub !== 'string'
@@ -214,10 +287,11 @@ export class PuraOAuthSession {
     }
   }
 
-  private async read(): Promise<PuraAuthTokens> {
+  private async read(): Promise<SessionTokens> {
     try {
       const record = JSON.parse(await fs.readFile(this.sessionPath, 'utf8')) as SavedSession;
       if (record.version !== 1 || record.clientId !== DEFAULT_CLIENT_ID || !record.tokens
+        || (record.tokens.provider !== undefined && record.tokens.provider !== 'website')
         || ['idToken', 'accessToken', 'refreshToken'].some(k => typeof record.tokens[k as keyof PuraAuthTokens] !== 'string')) {
         throw new Error();
       }
@@ -252,7 +326,7 @@ export class PuraOAuthSession {
     }
   }
 
-  private async save(tokens: PuraAuthTokens): Promise<void> {
+  private async save(tokens: SessionTokens): Promise<void> {
     const temporary = `${this.sessionPath}.${randomBytes(8).toString('hex')}.tmp`;
     try {
       await fs.writeFile(temporary, JSON.stringify({ version: 1, clientId: DEFAULT_CLIENT_ID, tokens } satisfies SavedSession), {

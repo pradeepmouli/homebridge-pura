@@ -90,35 +90,49 @@ platform alias. The maintained `PuraSmartDiffuser` alias is also accepted. Exist
 settings are retained when editing configuration in the custom UI. Upstream has changed control
 layouts since 1.0.0; review the intensity/bay options before upgrading an existing installation.
 
-For an account created with Sign in with Apple, select **Sign in with Apple / OAuth** in plugin
-settings, then **Start Apple sign-in** and open the generated link. Enter Apple credentials only on
-Apple's website. Password login remains the default for existing configurations.
+Select **Pura website session (Apple / Google / password)** in plugin settings and open
+**Sign in on Pura's website**. Complete login there, then open the browser developer tools:
+**Application** (Chrome/Edge) or **Storage** (Safari/Firefox) → **Cookies** → `https://pura.com`.
+Copy the **value** of `__prt` into the plugin's masked **Pura website refresh value** field and
+choose **Connect website session**. The field is cleared after submission. Never enter your Apple
+password into the plugin, or put this cookie value in chat, logs, screenshots or config.json.
+Password login remains the default for existing configurations.
 
-Pura accepts its registered mobile callback `pura://callback`, and rejects arbitrary Homebridge
-callback addresses. This preview therefore requires a **manual callback handoff**: after Apple login,
-copy the complete attempted `pura://callback?code=...&state=...` URL into the plugin's callback field
-and choose **Connect Pura account**. The callback field is masked and cleared after submission.
-Do not paste the URL or tokens into chat, logs, or config.json. If your browser opens the Pura app
-without exposing the handoff URL, or cannot display/copy that URL, this flow cannot finish in that
-browser yet. Reopening settings or starting another attempt invalidates the earlier login attempt.
-Real Apple login and browser handoff still require an end-to-end user test; the feature is not
-advertised as a completed one-click browser integration.
+The plugin exchanges this opaque refresh credential at Pura's HTTPS refresh endpoint and renews
+its one-hour tokens automatically. It does not decrypt the credential or depend on a particular
+user ID. Revoked or expired refresh credentials require signing in and importing a new value.
+Website tokens come directly from the fixed, certificate-validated Pura endpoint; their issuer,
+audience, expiry and matching account subjects are checked. They are not validated using the
+unrelated Cognito signing keys. Existing runtime sessions reject account changes until restart.
+
+The **Experimental mobile OAuth callback** section retains the older PKCE option. Its
+`pura://callback` handoff is unreliable when the Pura app opens instead; prefer the website flow.
 
 Disable the separate `@homebridge-plugins/homebridge-pura` installation before running this fork;
 both register the maintained platform alias and should not control the same account concurrently.
 After connecting, **Save** and restart only the Pura child bridge. JSON configuration needs
 `"authMethod": "oauth"`; it does not need a Pura or Apple password in that mode. A private refreshable
 session lives at `<Homebridge storage>/pura-oauth/session.json` (directory 0700, file 0600). This file
-is a credential: protect backups and never include it in bug reports. Tokens are verified against
-Pura's Cognito signing keys, issuer, client and nonce, and refresh-token rotation is persisted
+is a credential: protect backups and never include it in bug reports. Mobile OAuth tokens are verified against
+Pura's Cognito signing keys, issuer, client and nonce. Refresh-token rotation is persisted
 atomically with a shared UI/runtime lock. A replacement account requires a child restart so cached
 accessories cannot silently switch accounts. To disconnect, stop the Pura child, remove its private
 session file, then leave it stopped or configure another login method.
 
-Maintainer verification on 2026-11-05: Pura's OIDC discovery identifies `auth.pura.co`; a PKCE
-code request for `pura://callback` reaches Apple's authorization page. Automated tests cover the
-exchange, token verification, replay/expiry rejection, refresh and persistence using synthetic keys
-and mocked provider responses. They do not substitute for the pending real Apple sign-in test.
+Maintainer verification on 2026-11-05: a real Apple login at pura.com produced tokens accepted by
+the device inventory API. `POST https://user.trypura.io/v1/auth/refresh` with `{ "prt": "..." }`
+issued fresh tokens, and a renewed token successfully read the inventory. No device settings were
+changed. Automated tests exercise renewal, private persistence, account isolation and sanitized
+failures with synthetic credentials. The website integration uses an undocumented vendor API.
+
+### Installing this fork from GitHub
+
+Use the Homebridge UI install-by-package/URL facility with a packaged GitHub release asset URL.
+Release archives include compiled `dist` files and require no development tooling on the host.
+Git source installation is also supported: `github:pradeepmouli/homebridge-pura#<tag-or-commit>`.
+A source install runs the `prepare` build and therefore needs development dependencies; prefer the
+release archive for small Homebridge hosts. Preserve the existing child-bridge configuration and
+restart only its child after installation. Never reset or unpair the bridge to change login methods.
 
 ## Usage
 

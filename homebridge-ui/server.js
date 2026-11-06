@@ -11,6 +11,16 @@ class UiServer extends HomebridgePluginUiServer {
     const oauth = new PuraOAuthSession(this.homebridgeStoragePath);
     this.onRequest('/oauth/start', () => oauth.start());
     this.onRequest('/oauth/status', () => oauth.status());
+    this.onRequest('/oauth/website', async payload => {
+      if (typeof payload?.refreshValue !== 'string' || payload.refreshValue.length > 16384) {
+        throw new RequestError('Paste the __prt cookie value from pura.com.');
+      }
+      try {
+        return await oauth.connectWebsite(payload.refreshValue);
+      } catch (error) {
+        throw new RequestError(error.message);
+      }
+    });
     this.onRequest('/oauth/complete', async payload => {
       if (typeof payload?.callbackUrl !== 'string' || payload.callbackUrl.length > 16384) {
         throw new RequestError('Paste the complete Pura callback URL.');
