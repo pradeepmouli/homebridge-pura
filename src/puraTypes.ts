@@ -5,6 +5,7 @@
 import { PlatformConfig } from 'homebridge';
 
 export interface PuraConfig extends PlatformConfig {
+  authMethod?: 'password' | 'oauth';
   username: string;
   password: string;
   forceNightlightOff?: boolean;
