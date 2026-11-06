@@ -2,7 +2,7 @@
   "name": "homebridge-pura",
   "displayName": "Pura Smart Diffuser",
   "type": "module",
-  "version": "1.8.2-beta.2",
+  "version": "1.8.2-beta.3",
   "description": "Homebridge plugin for Pura smart fragrance diffusers",
   "author": "QandnotU",
   "license": "Apache-2.0",
@@ -30,7 +30,7 @@
   "scripts": {
     "build": "pnpm run prepare",
     "lint": "eslint . --max-warnings=0",
-    "test": "pnpm run build && node scripts/test-diffuser-state.js && node --test scripts/test-oauth.js",
+    "test": "pnpm run build && node scripts/test-diffuser-state.js && node --test scripts/test-oauth.js scripts/test-auth-ui.js",
     "prepublishOnly": "npm run lint && npm run build",
     "watch": "npm run build && npm link && nodemon",
     "prepare": "node scripts/clean-dist.js && tsc"

@@ -209,9 +209,10 @@
           <label for="emailLogin">Pura account email</label>
           <input id="emailLogin" type="email" class="form-control" autocomplete="username" />
           <button class="btn btn-outline-primary mt-2" id="emailSend" type="button">Send sign-in code</button>
-          <label class="mt-3" for="emailCode">Six-digit email code</label>
+          <label class="d-block mt-3" for="emailCode">Six-digit email code</label>
           <input id="emailCode" type="password" class="form-control" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
           <button class="btn btn-outline-primary mt-2" id="emailVerify" type="button" disabled>Verify and connect</button>
+          <p id="oauthStatus" class="mt-3" role="status" aria-live="polite"></p>
           <p class="form-text">Use your existing Pura account email, including for an Apple-created account.
             Enter the code here; no Apple password or cookie copying is needed. Tokens renew automatically.</p>
           <details class="mt-3"><summary>Advanced: import an existing website session</summary>
@@ -233,7 +234,6 @@
           <input id="oauthCallback" type="password" class="form-control" autocomplete="off" />
           <button class="btn btn-outline-primary mt-2" id="oauthComplete" type="button">Connect Pura account</button>
           </details>
-          <p id="oauthStatus" class="form-text" role="status"></p>
         </div>
 
         <div class="mb-3">
@@ -346,6 +346,10 @@
       let oauthConnected = false;
       const authMethod = document.getElementById('authMethod');
       const oauthStatus = document.getElementById('oauthStatus');
+      const showAuthStatus = (message, failed = false) => {
+        oauthStatus.textContent = message;
+        oauthStatus.classList.toggle('text-danger', failed);
+      };
       const setAuthPanel = () => {
         document.getElementById('oauthPanel').classList.toggle('d-none', authMethod.value !== 'oauth');
         document.getElementById('passwordPanel').classList.toggle('d-none', authMethod.value === 'oauth');
@@ -601,13 +605,14 @@
           verifyCode.disabled = true;
           emailAttemptId = '';
           document.getElementById('emailCode').value = '';
+          showAuthStatus('Sending sign-in code…');
           try {
             const result = await homebridge.request('/oauth/email/start', { email: emailInput.value.trim() });
             emailAttemptId = result.attemptId;
             verifyCode.disabled = false;
-            oauthStatus.textContent = 'Code sent. Enter the six-digit code from your email, then Verify and connect.';
+            showAuthStatus('Code sent. Enter the six-digit code from your email, then Verify and connect.');
           } catch (error) {
-            oauthStatus.textContent = error?.message || 'Unable to send the sign-in code.';
+            showAuthStatus(error?.message || 'Unable to send the sign-in code.', true);
           } finally {
             sendCode.disabled = false;
           }
@@ -615,20 +620,23 @@
         verifyCode.addEventListener('click', async () => {
           const input = document.getElementById('emailCode');
           const code = input.value.trim();
-          input.value = '';
           verifyCode.disabled = true;
           sendCode.disabled = true;
+          verifyCode.setAttribute('aria-busy', 'true');
+          showAuthStatus('Verifying code and connecting to Pura…');
           try {
             const result = await homebridge.request('/oauth/email/verify', { attemptId: emailAttemptId, code });
+            input.value = '';
             emailAttemptId = '';
             els.username.value = result.email || emailInput.value.trim();
             oauthConnected = true;
-            oauthStatus.textContent = `Connected to Pura${result.email ? ': ' + result.email : ''}. Save and restart the child bridge.`;
+            showAuthStatus(`Connected to Pura${result.email ? ': ' + result.email : ''}. Save and restart the child bridge.`);
             await syncConfig();
           } catch (error) {
-            oauthStatus.textContent = error?.message || 'Unable to verify the sign-in code.';
+            showAuthStatus(error?.message || 'Unable to verify the sign-in code.', true);
           } finally {
             sendCode.disabled = false;
+            verifyCode.removeAttribute('aria-busy');
             verifyCode.disabled = !emailAttemptId;
             updateSaveState();
           }
@@ -642,7 +650,7 @@
           try {
             const result = await homebridge.request('/oauth/website', { refreshValue });
             oauthConnected = true;
-            oauthStatus.textContent = `Connected to Pura${result.email ? ': ' + result.email : ''}. Save and restart the child bridge.`;
+            showAuthStatus(`Connected to Pura${result.email ? ': ' + result.email : ''}. Save and restart the child bridge.`);
             await syncConfig();
           } catch (error) {
             oauthStatus.textContent = error?.message || 'Unable to connect the Pura website session.';
@@ -667,7 +675,7 @@
           try {
             const result = await homebridge.request('/oauth/complete', { callbackUrl });
             oauthConnected = true;
-            oauthStatus.textContent = `Connected to Pura${result.email ? ': ' + result.email : ''}. Save and restart the child bridge.`;
+            showAuthStatus(`Connected to Pura${result.email ? ': ' + result.email : ''}. Save and restart the child bridge.`);
             document.getElementById('oauthLink').removeAttribute('href');
             document.getElementById('oauthLink').classList.add('d-none');
             await syncConfig();

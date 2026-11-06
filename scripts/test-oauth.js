@@ -414,9 +414,9 @@ test('email login rejects a different returned account and missing refresh crede
   await f.session.connectWebsite('existing-refresh');
   const original = await fs.readFile(f.session.sessionPath, 'utf8');
   const attempt = await f.session.startEmail('other@example.invalid');
-  await assert.rejects(f.session.verifyEmail(attempt.attemptId, '123456'), /could not verify/);
+  await assert.rejects(f.session.verifyEmail(attempt.attemptId, '123456'), /different account/);
   f.response({});
-  await assert.rejects(f.session.verifyEmail(attempt.attemptId, '123456'), /could not verify/);
+  await assert.rejects(f.session.verifyEmail(attempt.attemptId, '123456'), /refresh credential/);
   assert.equal(await fs.readFile(f.session.sessionPath, 'utf8'), original);
 });
 
@@ -429,4 +429,22 @@ test('concurrent email verification consumes the challenge only once', async t =
   ]);
   assert.equal(outcomes.filter(x => x.status === 'fulfilled').length, 1);
   assert.equal(f.verifications(), 1);
+});
+
+test('email verification reports whether Pura accepted a code but omitted credentials', async t => {
+  const f = await emailFixture(t);
+  const attempt = await f.session.startEmail('website@example.invalid');
+  f.response({});
+  await assert.rejects(f.session.verifyEmail(attempt.attemptId, '123456'), /accepted the code.*refresh credential/);
+});
+
+test('email verification identifies renewal failure without exposing provider details', async t => {
+  const f = await emailFixture(t);
+  const attempt = await f.session.startEmail('website@example.invalid');
+  f.fail();
+  await assert.rejects(f.session.verifyEmail(attempt.attemptId, '123456'), error => {
+    assert.match(error.message, /accepted the code.*renew/);
+    assert.doesNotMatch(error.message, /upstream private|email-refresh|123456/);
+    return true;
+  });
 });

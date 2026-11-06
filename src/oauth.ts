@@ -206,10 +206,12 @@ export class PuraOAuthSession {
     }
     pending.busy = true;
     pending.tries++;
+    let failure = 'Pura could not verify the code. Request a fresh code in this same settings window and try again.';
     try {
       const data = await this.loginRequest({
         method: 'otpVerify', email: pending.email, sessionId: pending.sessionId, code,
       });
+      failure = 'Pura accepted the code but did not return a usable refresh credential. The plugin needs a compatibility update.';
       const credential = data.prt;
       const refreshValue = typeof credential === 'string' ? credential
         : credential && typeof credential === 'object' && 'token' in credential ? credential.token : undefined;
@@ -217,16 +219,19 @@ export class PuraOAuthSession {
         throw new Error();
       }
       // Reuse the native refresh exchange and account checks; do not persist an OTP or sessionId.
+      failure = 'Pura accepted the code but could not renew the login session. Try signing in again.';
       const tokens = await this.exchangeWebsite(refreshValue);
+      failure = 'Pura returned a different account or the sign-in expired. Request a fresh code for your existing account email.';
       if (this.emailAttempt !== pending || this.now() >= pending.expiresAt
         || String(claims(tokens.idToken).email ?? '').toLowerCase() !== pending.email.toLowerCase()) {
         throw new Error();
       }
+      failure = 'Pura verified the account but the private session could not be saved. Check Homebridge storage permissions.';
       const connected = await this.acceptConnection(tokens, () => this.emailAttempt === pending && this.now() < pending.expiresAt);
       this.emailAttempt = undefined;
       return connected;
     } catch {
-      throw new Error('Pura could not verify the code. Check it and try again, or request a new code.');
+      throw new Error(failure);
     } finally {
       pending.busy = false;
     }
