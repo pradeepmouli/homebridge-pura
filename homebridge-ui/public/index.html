@@ -203,9 +203,18 @@
         <label class="form-label" for="authMethod">Sign-in method</label>
         <select class="form-control mb-3" id="authMethod">
           <option value="password">Pura email and password</option>
-          <option value="oauth">Pura website session (Apple / Google / password)</option>
+          <option value="oauth">Email verification code (recommended)</option>
         </select>
         <div id="oauthPanel" class="d-none mb-4">
+          <label for="emailLogin">Pura account email</label>
+          <input id="emailLogin" type="email" class="form-control" autocomplete="username" />
+          <button class="btn btn-outline-primary mt-2" id="emailSend" type="button">Send sign-in code</button>
+          <label class="mt-3" for="emailCode">Six-digit email code</label>
+          <input id="emailCode" type="password" class="form-control" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
+          <button class="btn btn-outline-primary mt-2" id="emailVerify" type="button" disabled>Verify and connect</button>
+          <p class="form-text">Use your existing Pura account email, including for an Apple-created account.
+            Enter the code here; no Apple password or cookie copying is needed. Tokens renew automatically.</p>
+          <details class="mt-3"><summary>Advanced: import an existing website session</summary>
           <a href="https://pura.com/account/login" target="_blank" rel="noopener noreferrer">Sign in on Pura's website</a>
           <p class="form-text">After signing in, open your browser's developer tools → Application/Storage → Cookies →
             https://pura.com. Copy only the value of <code>__prt</code> into the field below.
@@ -213,6 +222,7 @@
           <label for="websiteRefresh">Pura website refresh value (__prt)</label>
           <input id="websiteRefresh" type="password" class="form-control" autocomplete="off" spellcheck="false" />
           <button class="btn btn-outline-primary mt-2" id="websiteConnect" type="button">Connect website session</button>
+          </details>
           <details class="mt-3"><summary>Experimental mobile OAuth callback</summary>
           <button class="btn btn-outline-primary" id="oauthStart" type="button">Start Apple sign-in</button>
           <a id="oauthLink" class="d-none" target="_blank" rel="noopener noreferrer">Open Pura Apple sign-in</a>
@@ -580,6 +590,48 @@
           setAuthPanel();
           updateSaveState();
           if (authMethod.value !== 'oauth' || oauthConnected) { await syncConfig(); }
+        });
+        let emailAttemptId = '';
+        const emailInput = document.getElementById('emailLogin');
+        const sendCode = document.getElementById('emailSend');
+        const verifyCode = document.getElementById('emailVerify');
+        emailInput.value = current.username || '';
+        sendCode.addEventListener('click', async () => {
+          sendCode.disabled = true;
+          verifyCode.disabled = true;
+          emailAttemptId = '';
+          document.getElementById('emailCode').value = '';
+          try {
+            const result = await homebridge.request('/oauth/email/start', { email: emailInput.value.trim() });
+            emailAttemptId = result.attemptId;
+            verifyCode.disabled = false;
+            oauthStatus.textContent = 'Code sent. Enter the six-digit code from your email, then Verify and connect.';
+          } catch (error) {
+            oauthStatus.textContent = error?.message || 'Unable to send the sign-in code.';
+          } finally {
+            sendCode.disabled = false;
+          }
+        });
+        verifyCode.addEventListener('click', async () => {
+          const input = document.getElementById('emailCode');
+          const code = input.value.trim();
+          input.value = '';
+          verifyCode.disabled = true;
+          sendCode.disabled = true;
+          try {
+            const result = await homebridge.request('/oauth/email/verify', { attemptId: emailAttemptId, code });
+            emailAttemptId = '';
+            els.username.value = result.email || emailInput.value.trim();
+            oauthConnected = true;
+            oauthStatus.textContent = `Connected to Pura${result.email ? ': ' + result.email : ''}. Save and restart the child bridge.`;
+            await syncConfig();
+          } catch (error) {
+            oauthStatus.textContent = error?.message || 'Unable to verify the sign-in code.';
+          } finally {
+            sendCode.disabled = false;
+            verifyCode.disabled = !emailAttemptId;
+            updateSaveState();
+          }
         });
         document.getElementById('websiteConnect').addEventListener('click', async () => {
           const input = document.getElementById('websiteRefresh');

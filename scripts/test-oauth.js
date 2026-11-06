@@ -322,3 +322,111 @@ test('website response claims must match the issuer, audience, expiry and accoun
     assert.equal(await fs.readFile(f.session.sessionPath, 'utf8'), original);
   }
 });
+
+async function emailFixture(t) {
+  const f = await websiteFixture(t);
+  let starts = 0;
+  let verifications = 0;
+  let bad = false;
+  let response = { prt: { token: 'email-refresh' } };
+  const fetcher = async (url, options) => {
+    if (url.endsWith('/auth/refresh')) {
+      return f.fetcher(url, options);
+    }
+    assert.equal(url, 'https://user.trypura.io/v1/auth/login');
+    assert.equal(options.redirect, 'error');
+    const body = JSON.parse(options.body);
+    if (body.method === 'otp') {
+      starts++;
+      return Response.json({ sessionId: `private-session-${starts}`, message: 'sent' });
+    }
+    assert.equal(body.method, 'otpVerify');
+    assert.equal(body.sessionId, `private-session-${starts}`);
+    verifications++;
+    if (bad || body.code !== '123456') {
+      return new Response('private upstream secret and code', { status: 401 });
+    }
+    return Response.json(response);
+  };
+  return {
+    ...f, session: new PuraOAuthSession(f.directory, fetcher, f.now),
+    starts: () => starts, verifications: () => verifications,
+    rejectCodes: () => {
+      bad = true;
+    },
+    response: value => {
+      response = value;
+    },
+  };
+}
+
+test('native email-code sign-in stores a renewable session without exposing its challenge', async t => {
+  const f = await emailFixture(t);
+  const attempt = await f.session.startEmail('website@example.invalid');
+  assert.deepEqual(Object.keys(attempt).sort(), ['attemptId', 'expiresAt']);
+  assert.equal(f.starts(), 1);
+  assert.deepEqual(await f.session.verifyEmail(attempt.attemptId, '123456'), {
+    connected: true, email: 'website@example.invalid',
+  });
+  const saved = await fs.readFile(f.session.sessionPath, 'utf8');
+  assert.doesNotMatch(saved, /123456|private-session/);
+  assert.equal(JSON.parse(saved).tokens.refreshToken, 'email-refresh');
+  await f.session.refresh();
+  assert.equal(f.calls(), 2);
+  await assert.rejects(f.session.verifyEmail(attempt.attemptId, '123456'), /expired/);
+});
+
+test('email validation, cooldown, wrong attempts and expiry prevent extra API requests', async t => {
+  const f = await emailFixture(t);
+  await assert.rejects(f.session.startEmail('not-email'), /email address/);
+  const first = await f.session.startEmail('website@example.invalid');
+  await assert.rejects(f.session.startEmail('website@example.invalid'), /30 seconds/);
+  await assert.rejects(f.session.verifyEmail('foreign-attempt', '123456'), /expired/);
+  await assert.rejects(f.session.verifyEmail(first.attemptId, 'bad'), /six-digit/);
+  assert.equal(f.verifications(), 0);
+  f.advance(31_000);
+  const second = await f.session.startEmail('website@example.invalid');
+  await assert.rejects(f.session.verifyEmail(first.attemptId, '123456'), /expired/);
+  f.advance(600_001);
+  await assert.rejects(f.session.verifyEmail(second.attemptId, '123456'), /expired/);
+  assert.equal(f.verifications(), 0);
+});
+
+test('bad email codes are bounded, sanitized and preserve an existing grant', async t => {
+  const f = await emailFixture(t);
+  await f.session.connectWebsite('existing-refresh');
+  const original = await fs.readFile(f.session.sessionPath, 'utf8');
+  const attempt = await f.session.startEmail('website@example.invalid');
+  f.rejectCodes();
+  for (let i = 0; i < 5; i++) {
+    await assert.rejects(f.session.verifyEmail(attempt.attemptId, '123456'), error => {
+      assert.doesNotMatch(error.message, /private upstream|123456|email-refresh/);
+      return true;
+    });
+  }
+  await assert.rejects(f.session.verifyEmail(attempt.attemptId, '123456'), /expired/);
+  assert.equal(f.verifications(), 5);
+  assert.equal(await fs.readFile(f.session.sessionPath, 'utf8'), original);
+});
+
+test('email login rejects a different returned account and missing refresh credentials', async t => {
+  const f = await emailFixture(t);
+  await f.session.connectWebsite('existing-refresh');
+  const original = await fs.readFile(f.session.sessionPath, 'utf8');
+  const attempt = await f.session.startEmail('other@example.invalid');
+  await assert.rejects(f.session.verifyEmail(attempt.attemptId, '123456'), /could not verify/);
+  f.response({});
+  await assert.rejects(f.session.verifyEmail(attempt.attemptId, '123456'), /could not verify/);
+  assert.equal(await fs.readFile(f.session.sessionPath, 'utf8'), original);
+});
+
+test('concurrent email verification consumes the challenge only once', async t => {
+  const f = await emailFixture(t);
+  const attempt = await f.session.startEmail('website@example.invalid');
+  const outcomes = await Promise.allSettled([
+    f.session.verifyEmail(attempt.attemptId, '123456'),
+    f.session.verifyEmail(attempt.attemptId, '123456'),
+  ]);
+  assert.equal(outcomes.filter(x => x.status === 'fulfilled').length, 1);
+  assert.equal(f.verifications(), 1);
+});

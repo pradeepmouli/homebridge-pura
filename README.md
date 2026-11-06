@@ -82,7 +82,7 @@ Some changes may require recreating existing HomeKit scenes or automations for y
 - **enableNightlightAccessory (Enable Nightlight Controls)**: Set the vibe along with the scent. Adds HomeKit controls for the nightlight, including On/Off, Brightness, and Color, on compatible diffusers. (default: false)
 - **enableAutoAlternate (Enable Auto-Alternate Control)**: Can’t pick a favorite? Let Pura play referee. Adds a HomeKit switch for Pura’s Auto-Alternate setting on multi-bay diffusers. When on, Pura rotates between fragrance bays over time; when off, it sticks with the bay you choose. Either way, only one bay diffuses at a time. (default: false)
 
-## Apple / OAuth sign-in (preview)
+## Email-code and Apple / Google account sign-in (beta)
 
 This fork tracks [the maintained Pura plugin](https://github.com/homebridge-plugins/homebridge-pura),
 while retaining the `homebridge-pura` package name and accepting the original `PuraFragranceDiffuser`
@@ -90,13 +90,20 @@ platform alias. The maintained `PuraSmartDiffuser` alias is also accepted. Exist
 settings are retained when editing configuration in the custom UI. Upstream has changed control
 layouts since 1.0.0; review the intensity/bay options before upgrading an existing installation.
 
-Select **Pura website session (Apple / Google / password)** in plugin settings and open
-**Sign in on Pura's website**. Complete login there, then open the browser developer tools:
-**Application** (Chrome/Edge) or **Storage** (Safari/Firefox) → **Cookies** → `https://pura.com`.
-Copy the **value** of `__prt` into the plugin's masked **Pura website refresh value** field and
-choose **Connect website session**. The field is cleared after submission. Never enter your Apple
-password into the plugin, or put this cookie value in chat, logs, screenshots or config.json.
-Password login remains the default for existing configurations.
+Select **Email verification code (recommended)** in plugin settings, enter your existing Pura
+account email and choose **Send sign-in code**. Enter the six-digit code from your email and choose
+**Verify and connect**, then **Save** and restart only the Pura child bridge. This also works with
+an Apple-created account when Pura supports email-code access for that email; confirm that the
+expected diffusers appear after connecting. No Apple password or cookie copying is required.
+
+The UI keeps the pending challenge in memory for up to ten minutes, permits five verification
+attempts, and limits resend requests. Reopening the settings requires a new code. Codes and
+challenge session IDs are never written to config.json or the persistent token store. Password
+login remains available for existing configurations.
+
+**Advanced: import an existing website session** retains the manual fallback: sign in on pura.com,
+copy only the `__prt` cookie value from browser developer tools into the masked field and connect.
+Never share that value or an email code in chat, logs, screenshots or config.json.
 
 The plugin exchanges this opaque refresh credential at Pura's HTTPS refresh endpoint and renews
 its one-hour tokens automatically. It does not decrypt the credential or depend on a particular
@@ -118,6 +125,10 @@ Pura's Cognito signing keys, issuer, client and nonce. Refresh-token rotation is
 atomically with a shared UI/runtime lock. A replacement account requires a child restart so cached
 accessories cannot silently switch accounts. To disconnect, stop the Pura child, remove its private
 session file, then leave it stopped or configure another login method.
+
+Native API login methods identified on 2026-11-05: `password`, `authCode`, `otp` and `otpVerify`.
+Email-code login uses `otp` to obtain a private `sessionId`, then `otpVerify` with email, code and
+that session ID. A live code request succeeded; complete live verification remains a user step.
 
 Maintainer verification on 2026-11-05: a real Apple login at pura.com produced tokens accepted by
 the device inventory API. `POST https://user.trypura.io/v1/auth/refresh` with `{ "prt": "..." }`

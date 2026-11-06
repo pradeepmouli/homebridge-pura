@@ -71,7 +71,7 @@
           "oauth"
         ],
         "default": "password",
-        "description": "Password login or the refreshable Apple/OAuth session connected in plugin settings."
+        "description": "Password login or a refreshable email-code/website session connected in plugin settings."
       }
     },
     "allOf": [

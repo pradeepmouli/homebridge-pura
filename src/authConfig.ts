@@ -5,3 +5,4 @@ export const OAUTH_ISSUER = `https://cognito-idp.us-east-1.amazonaws.com/${DEFAU
 export const OAUTH_DOMAIN = 'https://auth.pura.co';
 export const OAUTH_REDIRECT_URI = 'pura://callback';
 export const WEBSITE_REFRESH_URL = 'https://user.trypura.io/v1/auth/refresh';
+export const WEBSITE_LOGIN_URL = 'https://user.trypura.io/v1/auth/login';
